@@ -98,8 +98,10 @@
   .btn-cancel { padding: 13px 18px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 15px; cursor: pointer; }
   .clear-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12px; color: var(--text-muted); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .clear-btn:active { background: var(--bg); }
-  .clear-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; } bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1f2937; color: white; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; transition: transform 0.3s ease; z-index: 200; white-space: nowrap; pointer-events: none; }
+  .clear-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1f2937; color: white; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; transition: transform 0.3s ease; z-index: 200; white-space: nowrap; pointer-events: none; }
   .toast.show { transform: translateX(-50%) translateY(0); }
+  .version-tag { text-align: center; padding: 10px; font-size: 11px; color: var(--text-faint); letter-spacing: 0.05em; }
 </style>
 </head>
 <body>
@@ -114,9 +116,7 @@
     </div>
     <div class="header-right">
       <div class="count-pill" id="count-pill">0 today</div>
-      <button class="icon-btn" onclick="openSettings()" aria-label="Settings">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      </button>
+
     </div>
   </header>
 
@@ -183,31 +183,7 @@
   </main>
 </div>
 
-<div class="modal-backdrop" id="modal" onclick="handleBackdropClick(event)">
-  <div class="modal">
-    <div class="modal-handle"></div>
-    <div class="modal-title">Settings</div>
-    <div class="field">
-      <label>Google Apps Script URL</label>
-      <input type="url" id="cfg-url" readonly style="background:#f3f4f6;color:#6b7280;cursor:not-allowed;font-size:11px;"/>
-      <div class="hint">URL is managed by your administrator and cannot be changed here.</div>
-    </div>
-    <div class="field">
-      <label>Duplicate scan window</label>
-      <select id="cfg-cooldown">
-        <option value="3000">3 seconds</option>
-        <option value="5000" selected>5 seconds</option>
-        <option value="10000">10 seconds</option>
-        <option value="30000">30 seconds</option>
-      </select>
-      <div class="hint">How long before the same card can be scanned again.</div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
-      <button class="btn-save" onclick="saveSettings()">Save settings</button>
-    </div>
-  </div>
-</div>
+<div class="version-tag">v1.0</div>
 
 <div class="toast" id="toast"></div>
 
