@@ -234,6 +234,7 @@ let timerInterval = null;
 let sessionSeconds = 0;
 let scanLog = [];
 let lastScanned = {};
+let audioCtx = null;
 let cfg = { url: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec', activity: '', duration: 30, cooldown: 5000 };
 
 function loadCfg() {
@@ -272,6 +273,12 @@ function setStatus(msg, type) {
 function startSession() {
   sessionSeconds = 0;
   lastScanned = {};
+
+  // Initialise AudioContext on user gesture so iOS allows sound later
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch(e) {}
 
   Quagga.init({
     inputStream: {
@@ -319,13 +326,34 @@ function stopSession() {
   setStatus('Session ended', '');
 }
 
+function beep() {
+  if (!audioCtx) return;
+  try {
+    // Short, clean grocery-store-style beep: 880Hz sine for 80ms
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.08);
+  } catch(e) {}
+}
+
 function handleScan(value) {
   const now = Date.now();
   if (lastScanned[value] && (now - lastScanned[value]) < cfg.cooldown) return;
   lastScanned[value] = now;
+  beep();
   const flash = document.getElementById('flash');
   flash.classList.add('active');
   setTimeout(() => flash.classList.remove('active'), 150);
+  const success = document.getElementById('scan-success');
+  success.classList.add('active');
+  setTimeout(() => success.classList.remove('active'), 900);
   const entry = { id: now, name: value, time: new Date(), status: 'pending' };
   scanLog.unshift(entry);
   renderLog();
