@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Airdrie Over 50 Club — Attendance</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --green: #16a34a; --green-light: #dcfce7; --green-dark: #15803d;
+    --red: #dc2626; --red-light: #fee2e2;
+    --bg: #f8f9fa; --surface: #ffffff;
+    --border: #e5e7eb; --border-strong: #d1d5db;
+    --text: #111827; --text-muted: #6b7280; --text-faint: #9ca3af;
+    --radius: 12px; --radius-sm: 8px;
+  }
+  html, body { height: 100%; background: var(--bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+  .app { min-height: 100vh; display: flex; flex-direction: column; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-mark { width: 36px; height: 36px; background: var(--green); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .logo-mark svg { width: 20px; height: 20px; fill: white; }
+  .logo-text { line-height: 1.2; }
+  .logo-text strong { font-size: 15px; font-weight: 600; display: block; }
+  .logo-text span { font-size: 12px; color: var(--text-muted); }
+  .header-right { display: flex; align-items: center; gap: 8px; }
+  .count-pill { background: var(--green-light); color: var(--green); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+  .icon-btn { width: 36px; height: 36px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-muted); -webkit-tap-highlight-color: transparent; }
+  .icon-btn:active { background: var(--bg); }
+  .icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; max-width: 1100px; width: 100%; margin: 0 auto; align-items: start; }
+  @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .card-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .card-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .card-label svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .camera-wrap { position: relative; background: #0a0a0a; aspect-ratio: 4/3; overflow: hidden; }
+  #interactive { width: 100%; height: 100%; }
+  #interactive video { width: 100% !important; height: 100% !important; object-fit: cover; display: block; }
+  #interactive canvas { display: none !important; }
+  .camera-idle-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #555; background: #0a0a0a; }
+  .camera-idle-state svg { width: 40px; height: 40px; fill: none; stroke: #555; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.5; }
+  .camera-idle-state p { font-size: 13px; opacity: 0.6; }
+  .scan-overlay { position: absolute; inset: 0; pointer-events: none; display: none; }
+  .scan-corner { position: absolute; width: 28px; height: 28px; border-color: #22c55e; border-style: solid; opacity: 0.9; }
+  .scan-corner.tl { top: 18%; left: 8%; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+  .scan-corner.tr { top: 18%; right: 8%; border-width: 3px 3px 0 0; border-radius: 0 4px 0 0; }
+  .scan-corner.bl { bottom: 18%; left: 8%; border-width: 0 0 3px 3px; border-radius: 0 0 0 4px; }
+  .scan-corner.br { bottom: 18%; right: 8%; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+  .scan-beam { position: absolute; left: 8%; right: 8%; height: 2px; background: linear-gradient(90deg, transparent, #22c55e, transparent); top: 18%; animation: beam 2s ease-in-out infinite; box-shadow: 0 0 8px #22c55e; }
+  @keyframes beam { 0%,100%{top:20%;} 50%{top:78%;} }
+  .scan-flash { position: absolute; inset: 0; background: rgba(34,197,94,0.3); opacity: 0; pointer-events: none; transition: opacity 0.08s; }
+  .scan-flash.active { opacity: 1; }
+  .scan-success { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+  .scan-success.active { opacity: 1; }
+  .scan-success-circle { width: 90px; height: 90px; border-radius: 50%; background: rgba(22,163,74,0.92); display: flex; align-items: center; justify-content: center; transform: scale(0.7); transition: transform 0.2s cubic-bezier(0.175,0.885,0.32,1.275); }
+  .scan-success.active .scan-success-circle { transform: scale(1); }
+  .scan-success-circle svg { width: 48px; height: 48px; fill: none; stroke: white; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .camera-footer { padding: 12px 16px; display: flex; gap: 8px; align-items: center; }
+  .btn-primary { flex: 1; padding: 11px 16px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px; -webkit-tap-highlight-color: transparent; transition: background 0.15s; }
+  .btn-primary:active { background: var(--green-dark); }
+  .btn-primary svg { width: 16px; height: 16px; fill: none; stroke: white; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+  .btn-secondary { padding: 11px 14px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font-size: 14px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; -webkit-tap-highlight-color: transparent; }
+  .btn-secondary:active { background: var(--bg); }
+  .btn-secondary svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .timer-display { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted); min-width: 44px; text-align: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+  .timer-display.live { color: var(--green); border-color: #86efac; background: var(--green-light); }
+  .status-strip { padding: 7px 16px; font-size: 12px; border-top: 1px solid var(--border); min-height: 30px; color: var(--text-faint); }
+  .status-strip.ok { color: var(--green); background: #f0fdf4; }
+  .status-strip.err { color: var(--red); background: var(--red-light); }
+  .log-scroll { max-height: 420px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .log-empty { padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13px; }
+  .log-empty svg { width: 32px; height: 32px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: 0.4; display: block; margin: 0 auto 10px; }
+  .log-item { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--border); animation: slideIn 0.25s ease; }
+  .log-item:last-child { border-bottom: none; }
+  @keyframes slideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: #eff6ff; color: #2563eb; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .log-meta { flex: 1; min-width: 0; }
+  .log-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log-time { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .status-icon { flex-shrink: 0; width: 22px; height: 22px; }
+  .status-icon svg { width: 22px; height: 22px; }
+  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; align-items: flex-end; justify-content: center; }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--surface); border-radius: var(--radius) var(--radius) 0 0; padding: 20px; width: 100%; max-width: 560px; max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .modal-handle { width: 40px; height: 4px; background: var(--border-strong); border-radius: 2px; margin: 0 auto 18px; }
+  .modal-title { font-size: 17px; font-weight: 600; margin-bottom: 18px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .field input, .field select { width: 100%; padding: 10px 12px; font-size: 15px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); -webkit-appearance: none; appearance: none; }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--green); }
+  .field .hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 20px; }
+  .btn-save { flex: 1; padding: 13px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 15px; font-weight: 600; cursor: pointer; }
+  .btn-cancel { padding: 13px 18px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 15px; cursor: pointer; }
+  .clear-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12px; color: var(--text-muted); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .clear-btn:active { background: var(--bg); }
+  .clear-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; } bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1f2937; color: white; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; transition: transform 0.3s ease; z-index: 200; white-space: nowrap; pointer-events: none; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24"><rect x="2" y="4" width="2" height="16"/><rect x="6" y="4" width="1" height="16"/><rect x="9" y="4" width="2" height="16"/><rect x="13" y="4" width="1" height="16"/><rect x="16" y="4" width="2" height="16"/><rect x="20" y="4" width="2" height="16"/></svg>
+      </div>
+      <div class="logo-text">
+        <strong>Airdrie Over 50 Club</strong>
+        <span>Attendance check-in</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="count-pill" id="count-pill">0 today</div>
+      <button class="icon-btn" onclick="openSettings()" aria-label="Settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Camera
+        </div>
+      </div>
+      <div class="camera-wrap">
+        <div class="camera-idle-state" id="idle-state">
+          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <p>Press Begin Scanning to start</p>
+        </div>
+        <div id="interactive"></div>
+        <div class="scan-overlay" id="scan-overlay">
+          <div class="scan-corner tl"></div>
+          <div class="scan-corner tr"></div>
+          <div class="scan-corner bl"></div>
+          <div class="scan-corner br"></div>
+          <div class="scan-beam"></div>
+        </div>
+        <div class="scan-flash" id="flash"></div>
+        <div class="scan-success" id="scan-success">
+          <div class="scan-success-circle">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+      </div>
+      <div class="camera-footer">
+        <button class="btn-primary" id="btn-start" onclick="startSession()">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Begin scanning ID cards
+        </button>
+        <button class="btn-secondary" id="btn-stop" onclick="stopSession()" style="display:none">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          Stop
+        </button>
+      </div>
+      <div class="status-strip" id="status">Ready — tap Begin Scanning to start</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Scan log
+        </div>
+        <button class="clear-btn" onclick="clearLog()" aria-label="Clear recent scans">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          Clear recent scans
+        </button>
+      </div>
+      <div class="log-scroll" id="log-list">
+        <div class="log-empty">
+          <svg viewBox="0 0 24 24"><rect x="2" y="5" width="2" height="14"/><rect x="6" y="5" width="1" height="14"/><rect x="9" y="5" width="2" height="14"/><rect x="13" y="5" width="1" height="14"/><rect x="16" y="5" width="2" height="14"/></svg>
+          No scans yet
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="modal" onclick="handleBackdropClick(event)">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Settings</div>
+    <div class="field">
+      <label>Google Apps Script URL</label>
+      <input type="url" id="cfg-url" placeholder="https://script.google.com/macros/s/…/exec" autocorrect="off" autocapitalize="none"/>
+      <div class="hint">Paste the deployment URL from your Google Apps Script.</div>
+    </div>
+    <div class="field">
+      <label>Activity name</label>
+      <input type="text" id="cfg-activity" placeholder="e.g. Morning Coffee, Cards, Fitness"/>
+      <div class="hint">Recorded alongside each scan in the spreadsheet.</div>
+    </div>
+    <div class="field">
+      <label>Session duration</label>
+      <select id="cfg-duration">
+        <option value="20">20 minutes</option>
+        <option value="30" selected>30 minutes</option>
+        <option value="45">45 minutes</option>
+        <option value="60">60 minutes</option>
+        <option value="90">90 minutes</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Duplicate scan window</label>
+      <select id="cfg-cooldown">
+        <option value="3000">3 seconds</option>
+        <option value="5000" selected>5 seconds</option>
+        <option value="10000">10 seconds</option>
+        <option value="30000">30 seconds</option>
+      </select>
+      <div class="hint">How long before the same card can be scanned again.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+      <button class="btn-save" onclick="saveSettings()">Save settings</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+<script>
+let sessionActive = false;
+let timerInterval = null;
+let sessionSeconds = 0;
+let scanLog = [];
+let lastScanned = {};
+let cfg = { url: '', activity: '', duration: 30, cooldown: 5000 };
+
+function loadCfg() {
+  try { const s = localStorage.getItem('ao50_cfg'); if (s) cfg = {...cfg, ...JSON.parse(s)}; } catch(e) {}
+}
+function saveCfg() {
+  try { localStorage.setItem('ao50_cfg', JSON.stringify(cfg)); } catch(e) {}
+}
+function openSettings() {
+  document.getElementById('cfg-url').value = cfg.url || '';
+  document.getElementById('cfg-activity').value = cfg.activity || '';
+  document.getElementById('cfg-duration').value = cfg.duration || 30;
+  document.getElementById('cfg-cooldown').value = cfg.cooldown || 5000;
+  document.getElementById('modal').classList.add('open');
+}
+function closeSettings() { document.getElementById('modal').classList.remove('open'); }
+function handleBackdropClick(e) { if (e.target === document.getElementById('modal')) closeSettings(); }
+function saveSettings() {
+  cfg.url = document.getElementById('cfg-url').value.trim();
+  cfg.activity = document.getElementById('cfg-activity').value.trim();
+  cfg.duration = parseInt(document.getElementById('cfg-duration').value);
+  cfg.cooldown = parseInt(document.getElementById('cfg-cooldown').value);
+  saveCfg(); closeSettings(); showToast('Settings saved');
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status-strip' + (type ? ' ' + type : '');
+}
+
+function startSession() {
+  if (!cfg.url) { openSettings(); showToast('Add your Apps Script URL first'); return; }
+  sessionSeconds = 0;
+  lastScanned = {};
+
+  Quagga.init({
+    inputStream: {
+      name: 'Live',
+      type: 'LiveStream',
+      target: document.getElementById('interactive'),
+      constraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    },
+    decoder: { readers: ['code_128_reader'] },
+    locate: true,
+    numOfWorkers: 2,
+    frequency: 10
+  }, function(err) {
+    if (err) { setStatus('Camera error: ' + (err.message || err), 'err'); return; }
+    Quagga.start();
+    sessionActive = true;
+    document.getElementById('idle-state').style.display = 'none';
+    document.getElementById('scan-overlay').style.display = 'block';
+    document.getElementById('btn-start').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'flex';
+    sessionTimeout = setTimeout(stopSession, cfg.duration * 60 * 1000);
+    setStatus('Scanning — hold member card steady in view', 'ok');
+  });
+
+  Quagga.onDetected(function(result) {
+    const code = result.codeResult.code;
+    if (code) handleScan(code);
+  });
+}
+
+function stopSession() {
+  if (!sessionActive) return;
+  sessionActive = false;
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  try { Quagga.stop(); } catch(e) {}
+  const interactive = document.getElementById('interactive');
+  const vid = interactive.querySelector('video');
+  if (vid && vid.srcObject) { vid.srcObject.getTracks().forEach(t => t.stop()); vid.srcObject = null; }
+  interactive.innerHTML = '';
+  document.getElementById('idle-state').style.display = 'flex';
+  document.getElementById('scan-overlay').style.display = 'none';
+  document.getElementById('btn-start').style.display = 'flex';
+  document.getElementById('btn-stop').style.display = 'none';
+  document.getElementById('timer').className = 'timer-display';
+  setStatus('Session ended', '');
+}
+
+function handleScan(value) {
+  const now = Date.now();
+  if (lastScanned[value] && (now - lastScanned[value]) < cfg.cooldown) return;
+  lastScanned[value] = now;
+  const flash = document.getElementById('flash');
+  flash.classList.add('active');
+  setTimeout(() => flash.classList.remove('active'), 150);
+  const entry = { id: now, name: value, time: new Date(), status: 'pending' };
+  scanLog.unshift(entry);
+  renderLog();
+  postToSheet(entry);
+}
+
+async function postToSheet(entry) {
+  const params = new URLSearchParams({
+    name: entry.name,
+    timestamp: entry.time.toLocaleString('en-CA', { timeZone: 'America/Edmonton' }),
+    activity: cfg.activity || 'General'
+  });
+  try {
+    await fetch(cfg.url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+    updateEntryStatus(entry.id, 'done');
+    setStatus('Recorded: ' + entry.name, 'ok');
+  } catch(e) {
+    updateEntryStatus(entry.id, 'error');
+    setStatus('Network error — check connection', 'err');
+  }
+}
+
+function initials(name) {
+  return name.trim().split(/\s+/).map(w => w[0] || '').join('').substring(0,2).toUpperCase() || '?';
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function renderLog() {
+  const list = document.getElementById('log-list');
+  if (!scanLog.length) {
+    list.innerHTML = '<div class="log-empty"><svg viewBox="0 0 24 24"><rect x="2" y="5" width="2" height="14"/><rect x="6" y="5" width="1" height="14"/><rect x="9" y="5" width="2" height="14"/><rect x="13" y="5" width="1" height="14"/><rect x="16" y="5" width="2" height="14"/></svg>No scans yet</div>';
+    return;
+  }
+  list.innerHTML = scanLog.map(e => {
+    const t = e.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const icon = e.status === 'done'
+      ? '<svg viewBox="0 0 24 24" style="stroke:#16a34a;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+      : e.status === 'error'
+        ? '<svg viewBox="0 0 24 24" style="stroke:#dc2626;fill:none;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+        : '<svg viewBox="0 0 24 24" style="stroke:#d97706;fill:none;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+    return '<div class="log-item"><div class="avatar">' + initials(e.name) + '</div><div class="log-meta"><div class="log-name">' + escHtml(e.name) + '</div><div class="log-time">' + t + (cfg.activity ? ' · ' + escHtml(cfg.activity) : '') + '</div></div><div class="status-icon">' + icon + '</div></div>';
+  }).join('');
+  const today = scanLog.filter(e => e.time.toDateString() === new Date().toDateString()).length;
+  document.getElementById('count-pill').textContent = today + ' today';
+}
+function updateEntryStatus(id, status) {
+  const e = scanLog.find(e => e.id === id);
+  if (e) { e.status = status; renderLog(); }
+}
+function clearLog() {
+  if (scanLog.length && !confirm('Clear the scan log?')) return;
+  scanLog = []; renderLog();
+}
+
+loadCfg();
+renderLog();
+if (!cfg.url) setTimeout(() => showToast('Tap \u2699 to add your Apps Script URL'), 1000);
+</script>
+</body>
+</html>
