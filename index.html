@@ -235,6 +235,7 @@ let sessionSeconds = 0;
 let scanLog = [];
 let lastScanned = {};
 let audioCtx = null;
+let lastScanTime = 0;  // global lock - any scan within 2s of last is ignored
 let cfg = { url: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec', activity: '', duration: 30, cooldown: 5000 };
 
 function loadCfg() {
@@ -270,15 +271,23 @@ function setStatus(msg, type) {
   el.className = 'status-strip' + (type ? ' ' + type : '');
 }
 
+function unlockAudio() {
+  // iOS needs a silent buffer played synchronously inside the tap to fully unlock audio
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start(0);
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch(e) {}
+}
+
 function startSession() {
   sessionSeconds = 0;
   lastScanned = {};
-
-  // Initialise AudioContext on user gesture so iOS allows sound later
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-  } catch(e) {}
+  unlockAudio();
 
   Quagga.init({
     inputStream: {
@@ -329,23 +338,31 @@ function stopSession() {
 function beep() {
   if (!audioCtx) return;
   try {
-    // Short, clean grocery-store-style beep: 880Hz sine for 80ms
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-    gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
-    osc.start(audioCtx.currentTime);
-    osc.stop(audioCtx.currentTime + 0.08);
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    // Two-tone chirp: low then high, like a retail scanner
+    [{ freq: 880, start: 0, dur: 0.1 }, { freq: 1200, start: 0.12, dur: 0.1 }].forEach(({ freq, start, dur }) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t + start);
+      gain.gain.setValueAtTime(0.6, t + start);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + start + dur);
+      osc.start(t + start);
+      osc.stop(t + start + dur + 0.01);
+    });
   } catch(e) {}
 }
 
 function handleScan(value) {
   const now = Date.now();
+  // Global lock: ignore anything within 2 seconds of the last accepted scan
+  if (now - lastScanTime < 2000) return;
+  // Per-card cooldown: same card can't scan again within the configured window
   if (lastScanned[value] && (now - lastScanned[value]) < cfg.cooldown) return;
+  lastScanTime = now;
   lastScanned[value] = now;
   beep();
   const flash = document.getElementById('flash');
