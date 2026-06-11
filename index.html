@@ -215,8 +215,7 @@
 <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
 <script>
 let sessionActive = false;
-let timerInterval = null;
-let sessionSeconds = 0;
+let sessionTimeout = null;
 let scanLog = [];
 let lastScanned = {};
 let lastScanTime = 0;  // global lock - any scan within 2s of last is ignored
@@ -292,7 +291,7 @@ function startSession() {
     document.getElementById('scan-overlay').style.display = 'block';
     document.getElementById('btn-start').style.display = 'none';
     document.getElementById('btn-stop').style.display = 'flex';
-    sessionTimeout = setTimeout(stopSession, cfg.duration * 60 * 1000);
+    sessionTimeout = setTimeout(stopSession, 30 * 60 * 1000);
     setStatus('Scanning — hold member card steady in view', 'ok');
   });
 
@@ -305,7 +304,7 @@ function startSession() {
 function stopSession() {
   if (!sessionActive) return;
   sessionActive = false;
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  if (sessionTimeout) { clearTimeout(sessionTimeout); sessionTimeout = null; }
   try { Quagga.stop(); } catch(e) {}
   const interactive = document.getElementById('interactive');
   const vid = interactive.querySelector('video');
@@ -315,7 +314,6 @@ function stopSession() {
   document.getElementById('scan-overlay').style.display = 'none';
   document.getElementById('btn-start').style.display = 'flex';
   document.getElementById('btn-stop').style.display = 'none';
-  document.getElementById('timer').className = 'timer-display';
   setStatus('Session ended', '');
 }
 
