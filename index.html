@@ -183,7 +183,7 @@
   </main>
 </div>
 
-<div class="version-tag">v1.0</div>
+<div class="version-tag">v1.1</div>
 
 <div class="toast" id="toast"></div>
 
@@ -195,6 +195,8 @@ let stream = null;
 let scanLog = [];
 let lastScanned = {};
 let lastScanTime = 0;
+let voteBuffer = [];        // consecutive matching reads required before accepting
+const VOTE_THRESHOLD = 3;   // must see the same value 3 frames in a row
 let cfg = { url: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec', cooldown: 5000 };
 
 function loadCfg() {
@@ -272,6 +274,7 @@ function startSession() {
 function stopSession() {
   if (!sessionActive) return;
   sessionActive = false;
+  voteBuffer = [];
   if (sessionTimeout) { clearTimeout(sessionTimeout); sessionTimeout = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   const video = document.getElementById('video');
@@ -285,6 +288,9 @@ function stopSession() {
 }
 
 // Frame scanning — getUserMedia feeds video, Quagga2 decodes frames
+// Uses a confidence voting system: same value must appear 3 times in a row
+// before being accepted, filtering out random misreads entirely
+
 function scanFrames() {
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
@@ -296,19 +302,52 @@ function scanFrames() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0);
+
+      // Boost contrast before decoding — helps with printed barcodes
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        // Convert to greyscale then apply contrast stretch
+        const grey = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+        const contrasted = Math.min(255, Math.max(0, (grey - 128) * 1.5 + 128));
+        d[i] = d[i+1] = d[i+2] = contrasted;
+      }
+      ctx.putImageData(imageData, 0, 0);
+
       try {
         Quagga.decodeSingle({
-          decoder: { readers: ['code_128_reader'] },
+          decoder: {
+            readers: ['code_128_reader'],
+            debug: { drawBoundingBox: false, showFrequency: false, drawScanline: false }
+          },
           locate: true,
+          inputStream: { size: 800 },
           src: canvas.toDataURL('image/png')
         }, function(result) {
-          if (result && result.codeResult && result.codeResult.code) {
-            handleScan(result.codeResult.code);
+          const code = result && result.codeResult && result.codeResult.code;
+          // Enforce Code 128 checksum — discard anything that fails
+          const validChecksum = result && result.codeResult &&
+            result.codeResult.startInfo &&
+            result.codeResult.decodedCodes &&
+            result.codeResult.decodedCodes.length > 0 &&
+            result.codeResult.decodedCodes.slice(-1)[0].error < 0.25;
+          if (code && validChecksum) {
+            // Add to vote buffer
+            voteBuffer.push(code);
+            if (voteBuffer.length > VOTE_THRESHOLD) voteBuffer.shift();
+            // Only accept if last N reads all match
+            if (voteBuffer.length === VOTE_THRESHOLD && voteBuffer.every(v => v === code)) {
+              voteBuffer = []; // reset after accepting
+              handleScan(code);
+            }
+          } else {
+            // Failed read — clear the buffer so we don't carry stale votes
+            voteBuffer = [];
           }
         });
       } catch(e) {}
     }
-    if (sessionActive) setTimeout(tick, 250);
+    if (sessionActive) setTimeout(tick, 150); // ~6fps for faster voting
   }
   tick();
 }
