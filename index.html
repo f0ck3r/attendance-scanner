@@ -87,7 +87,7 @@
   - Update found + no active scan session: reloads silently and immediately
   - Update found + session is active: waits until session stops, then reloads
   - IMPORTANT: When deploying a new version, bump CACHE_VERSION in sw.js
-    (e.g. 'ao50-v1.7' → 'ao50-v1.7') to trigger cache invalidation on all
+    (e.g. 'ao50-v1.8' → 'ao50-v1.8') to trigger cache invalidation on all
     open devices. Version in index.html and sw.js must be kept in sync.
 
   iOS / SAFARI NOTES:
@@ -116,7 +116,10 @@
   v1.6 — Scan speed improvements: JPEG frame encoding (3x faster than PNG),
           centre-crop to 60% of frame, 8fps tick rate, vote threshold
           reduced from 3 to 2 frames.
-  v1.7 — Added haptic feedback (80ms vibration) on successful scan.
+  v1.8 — Added haptic feedback (80ms vibration) on successful scan.
+  v1.8 — Name proper-case normalisation. Error logging to admin sheet
+          (persistent via localStorage, survives reboots). Session
+          start/stop logged. Global JS error catch.
 
 ================================================================================
 -->
@@ -309,7 +312,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.7</span>
+  <span class="version-tag" id="version-tag">v1.8</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -325,7 +328,13 @@ let lastScanned = {};
 let lastScanTime = 0;
 let voteBuffer = [];        // consecutive matching reads required before accepting
 const VOTE_THRESHOLD = 2;   // 2 consecutive matching frames required (checksum handles accuracy)
-let cfg = { url: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec', cooldown: 5000 };
+// cfg.errorUrl = current sheet (admin/error log)
+// cfg.attendanceUrl = production attendance sheet (set in v1.9)
+let cfg = {
+  errorUrl: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec',
+  attendanceUrl: '', // populated in v1.9
+  cooldown: 5000
+};
 
 function loadCfg() {
   try { const s = localStorage.getItem('ao50_cfg'); if (s) cfg = {...cfg, ...JSON.parse(s)}; } catch(e) {}
@@ -392,10 +401,13 @@ function startSession() {
       document.getElementById('btn-stop').style.display = 'flex';
       sessionTimeout = setTimeout(stopSession, 30 * 60 * 1000);
       setStatus('Scanning — hold member card steady in view', 'ok');
+    logError('INFO', 'Session started');
       scanFrames();
     });
   }).catch(function(err) {
-    setStatus('Camera error: ' + (err.message || err), 'err');
+    const errMsg = 'Camera error: ' + (err.message || err);
+    setStatus(errMsg, 'err');
+    logError('ERROR', errMsg);
   });
 }
 
@@ -412,6 +424,8 @@ function stopSession() {
   document.getElementById('scan-overlay').style.display = 'none';
   document.getElementById('btn-start').style.display = 'flex';
   document.getElementById('btn-stop').style.display = 'none';
+  const scanCount = scanLog.filter(e => e.time && new Date(e.time).toDateString() === new Date().toDateString()).length;
+  logError('INFO', 'Session ended — ' + scanCount + ' scan' + (scanCount !== 1 ? 's' : '') + ' this session');
   setStatus('Session ended', '');
   if (updatePending) window.location.reload();
 }
@@ -545,13 +559,21 @@ function updateQueueBadge() {
   }
 }
 
+// Normalise name to proper case regardless of how barcode was encoded
+// e.g. JOHN SMITH → John Smith, john smith → John Smith
+function toProperCase(str) {
+  return str.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
 async function postEntry(id, name, time) {
+  const properName = toProperCase(name);
   const params = new URLSearchParams({
-    name: name,
+    name: properName,
     timestamp: new Date(time).toLocaleString('en-CA', { timeZone: 'America/Edmonton' }),
     token: 'ao50club2025'
   });
-  await fetch(cfg.url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+  const url = cfg.attendanceUrl || cfg.errorUrl; // fallback to error URL if attendance not set yet
+  await fetch(url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
 }
 
 async function postToSheet(entry) {
@@ -564,6 +586,7 @@ async function postToSheet(entry) {
     updateEntryStatus(entry.id, 'queued');
     addToQueue(entry);
     setStatus('Offline — scan saved, will sync when connected', 'warn');
+    logError('WARN', 'Attendance post failed for ' + entry.name + ' — queued for retry');
   }
 }
 
@@ -590,10 +613,71 @@ async function flushQueue() {
   }
 }
 
+// ── Error logging ──
+// Errors are queued locally (survives reboots) and posted to the admin sheet
+// when connectivity is available. Staff never see this — it's for admin debugging.
+
+const ERROR_LOG_KEY = 'ao50_errlog';
+
+function loadErrorQueue() {
+  try { return JSON.parse(localStorage.getItem(ERROR_LOG_KEY) || '[]'); } catch(e) { return []; }
+}
+function saveErrorQueue(q) {
+  try {
+    // Keep last 50 errors max to avoid filling localStorage
+    localStorage.setItem(ERROR_LOG_KEY, JSON.stringify(q.slice(-50)));
+  } catch(e) {}
+}
+
+function logError(type, message) {
+  const entry = {
+    id: Date.now(),
+    timestamp: new Date().toLocaleString('en-CA', { timeZone: 'America/Edmonton' }),
+    type: type,
+    message: message
+  };
+  const q = loadErrorQueue();
+  q.push(entry);
+  saveErrorQueue(q);
+  // Try to post immediately; if offline it stays in queue for later
+  postErrorEntry(entry);
+}
+
+async function postErrorEntry(entry) {
+  if (!cfg.errorUrl) return;
+  try {
+    const params = new URLSearchParams({
+      timestamp: entry.timestamp,
+      type: entry.type,
+      message: entry.message,
+      device: 'iPad',
+      token: 'ao50club2025'
+    });
+    await fetch(cfg.errorUrl + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+    // Remove from queue on success
+    const q = loadErrorQueue().filter(e => e.id !== entry.id);
+    saveErrorQueue(q);
+  } catch(e) {
+    // Leave in queue — will retry when online
+  }
+}
+
+async function flushErrorQueue() {
+  const q = loadErrorQueue();
+  if (q.length === 0) return;
+  for (const entry of q) {
+    try {
+      await postErrorEntry(entry);
+    } catch(e) {
+      break; // Still offline
+    }
+  }
+}
+
 // Listen for connectivity changes
 window.addEventListener('online', () => {
   showToast('Back online — syncing...');
-  setTimeout(flushQueue, 1000); // slight delay to let connection stabilise
+  setTimeout(() => { flushQueue(); flushErrorQueue(); }, 1000);
 });
 window.addEventListener('offline', () => {
   setStatus('Offline — scans will be saved and synced automatically', 'warn');
@@ -646,6 +730,17 @@ function clearLog() {
 
 loadCfg();
 renderLog();
+
+// Global JS error catch — logs unexpected errors to admin sheet
+window.addEventListener('error', function(e) {
+  logError('ERROR', 'JS error: ' + e.message + ' (' + (e.filename || '') + ':' + (e.lineno || '') + ')');
+});
+window.addEventListener('unhandledrejection', function(e) {
+  logError('ERROR', 'Unhandled promise: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+});
+
+// Flush any error queue left from previous session
+if (navigator.onLine) setTimeout(flushErrorQueue, 3000);
 
 // ── Service Worker registration & auto-update ──
 const APP_VERSION = '1.4';
