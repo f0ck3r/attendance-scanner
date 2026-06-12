@@ -104,6 +104,8 @@
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   .bottom-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px 16px; max-width: 1100px; margin: 0 auto; }
   .version-tag { font-size: 11px; color: var(--text-faint); letter-spacing: 0.05em; }
+  .queue-badge { font-size: 11px; color: #d97706; background: #fef3c7; border: 1px solid #fde68a; border-radius: 999px; padding: 3px 8px; }
+  .status-strip.warn { color: #d97706; background: #fffbeb; }
   .update-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 11px; color: var(--text-faint); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color 0.15s, border-color 0.15s; }
   .update-btn:active { background: var(--bg); }
   .update-btn.checking { color: var(--green); border-color: var(--green); }
@@ -191,7 +193,8 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.2</span>
+  <span class="version-tag" id="version-tag">v1.3</span>
+  <span class="queue-badge" id="queue-badge" style="display:none"></span>
   <button class="update-btn" id="update-btn" onclick="checkForUpdates()" title="Check for updates">
     <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
     Check for updates
@@ -384,20 +387,106 @@ function handleScan(value) {
   postToSheet(entry);
 }
 
-async function postToSheet(entry) {
+// ── Offline queue ──
+// Failed posts are saved to localStorage and retried automatically when
+// connectivity returns. Staff don't need to do anything.
+
+function loadQueue() {
+  try { return JSON.parse(localStorage.getItem('ao50_queue') || '[]'); } catch(e) { return []; }
+}
+function saveQueue(q) {
+  try { localStorage.setItem('ao50_queue', JSON.stringify(q)); } catch(e) {}
+}
+function addToQueue(entry) {
+  const q = loadQueue();
+  // Avoid duplicates in case of rapid retries
+  if (!q.find(e => e.id === entry.id)) {
+    q.push({ id: entry.id, name: entry.name, time: entry.time });
+    saveQueue(q);
+  }
+  updateQueueBadge();
+}
+function removeFromQueue(id) {
+  const q = loadQueue().filter(e => e.id !== id);
+  saveQueue(q);
+  updateQueueBadge();
+}
+
+function updateQueueBadge() {
+  const q = loadQueue();
+  const badge = document.getElementById('queue-badge');
+  if (!badge) return;
+  if (q.length > 0) {
+    badge.textContent = q.length + ' pending';
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+async function postEntry(id, name, time) {
   const params = new URLSearchParams({
-    name: entry.name,
-    timestamp: entry.time.toLocaleString('en-CA', { timeZone: 'America/Edmonton' })
+    name: name,
+    timestamp: new Date(time).toLocaleString('en-CA', { timeZone: 'America/Edmonton' })
   });
+  // Use no-cors — we can't read the response, but a network error throws
+  await fetch(cfg.url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+}
+
+async function postToSheet(entry) {
   try {
-    await fetch(cfg.url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+    await postEntry(entry.id, entry.name, entry.time);
     updateEntryStatus(entry.id, 'done');
     setStatus('Recorded: ' + entry.name, 'ok');
   } catch(e) {
-    updateEntryStatus(entry.id, 'error');
-    setStatus('Network error — check connection', 'err');
+    // Network failed — queue it for later
+    updateEntryStatus(entry.id, 'queued');
+    addToQueue(entry);
+    setStatus('Offline — scan saved, will sync when connected', 'warn');
   }
 }
+
+// Retry all queued entries
+async function flushQueue() {
+  const q = loadQueue();
+  if (q.length === 0) return;
+  let successCount = 0;
+  for (const item of q) {
+    try {
+      await postEntry(item.id, item.name, item.time);
+      removeFromQueue(item.id);
+      // Update the log entry status if it's still visible
+      updateEntryStatus(item.id, 'done');
+      successCount++;
+    } catch(e) {
+      break; // Still offline — stop trying, wait for next online event
+    }
+  }
+  if (successCount > 0) {
+    updateQueueBadge();
+    showToast(successCount + ' queued scan' + (successCount > 1 ? 's' : '') + ' synced ✓');
+    setStatus('Synced ' + successCount + ' offline scan' + (successCount > 1 ? 's' : ''), 'ok');
+  }
+}
+
+// Listen for connectivity changes
+window.addEventListener('online', () => {
+  showToast('Back online — syncing...');
+  setTimeout(flushQueue, 1000); // slight delay to let connection stabilise
+});
+window.addEventListener('offline', () => {
+  setStatus('Offline — scans will be saved and synced automatically', 'warn');
+});
+
+// On startup, flush any queue left over from a previous session
+window.addEventListener('load', () => {
+  updateQueueBadge();
+  if (navigator.onLine && loadQueue().length > 0) {
+    setTimeout(() => {
+      flushQueue();
+    }, 2000);
+  }
+});
 
 function initials(name) {
   return name.trim().split(/\s+/).map(w => w[0] || '').join('').substring(0,2).toUpperCase() || '?';
@@ -415,6 +504,8 @@ function renderLog() {
     const t = e.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const icon = e.status === 'done'
       ? '<svg viewBox="0 0 24 24" style="stroke:#16a34a;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+      : e.status === 'queued'
+        ? '<svg viewBox="0 0 24 24" style="stroke:#d97706;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M1 6l4 4 4-4"/><path d="M5 10V3"/><rect x="11" y="3" width="10" height="3" rx="1"/><rect x="11" y="9" width="7" height="3" rx="1"/><rect x="11" y="15" width="8" height="3" rx="1"/></svg>'
       : e.status === 'error'
         ? '<svg viewBox="0 0 24 24" style="stroke:#dc2626;fill:none;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
         : '<svg viewBox="0 0 24 24" style="stroke:#d97706;fill:none;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
