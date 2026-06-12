@@ -56,6 +56,7 @@
   - Timestamps are formatted in Mountain Time (America/Edmonton)
   - Google Apps Script code (in the linked Sheet):
       function doGet(e) {
+        if (e.parameter.token !== 'ao50club2025') return ContentService.createTextOutput("Unauthorized");
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
         sheet.appendRow([
           e.parameter.name,
@@ -65,7 +66,8 @@
       }
 
   HARDCODED SETTINGS (change here in code, not in the app UI):
-  - Apps Script URL: https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec
+  - Apps Script URL: stored in cfg.url in the JS below — keep this out of
+    public documentation. Obtain from the Google Apps Script deployment page.
   - Duplicate scan global cooldown: 2000ms (2 seconds)
   - Duplicate scan per-card cooldown: 5000ms (5 seconds) — stored in cfg.cooldown
   - Session auto-stop timeout: 30 minutes
@@ -85,7 +87,7 @@
   - Update found + no active scan session: reloads silently and immediately
   - Update found + session is active: waits until session stops, then reloads
   - IMPORTANT: When deploying a new version, bump CACHE_VERSION in sw.js
-    (e.g. 'ao50-v1.4' → 'ao50-v1.5') to trigger cache invalidation on all
+    (e.g. 'ao50-v1.5' → 'ao50-v1.5') to trigger cache invalidation on all
     open devices. Version in index.html and sw.js must be kept in sync.
 
   iOS / SAFARI NOTES:
@@ -107,7 +109,7 @@
           Added subtle "Check for updates" button in bottom bar.
   v1.3 — Added offline queue: failed scans saved to localStorage and
           retried automatically when connectivity returns.
-  v1.4 — Removed manual "Check for updates" button. App now checks for
+  v1.5 — Removed manual "Check for updates" button. App now checks for
           updates automatically on launch and every 60 seconds. Updates
           apply immediately if no session is active, or waits until
           session ends if scanning is in progress.
@@ -303,7 +305,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.4</span>
+  <span class="version-tag" id="version-tag">v1.5</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -534,9 +536,9 @@ function updateQueueBadge() {
 async function postEntry(id, name, time) {
   const params = new URLSearchParams({
     name: name,
-    timestamp: new Date(time).toLocaleString('en-CA', { timeZone: 'America/Edmonton' })
+    timestamp: new Date(time).toLocaleString('en-CA', { timeZone: 'America/Edmonton' }),
+    token: 'ao50club2025'
   });
-  // Use no-cors — we can't read the response, but a network error throws
   await fetch(cfg.url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
 }
 
