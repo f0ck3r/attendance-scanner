@@ -101,7 +101,14 @@
   .clear-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1f2937; color: white; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; transition: transform 0.3s ease; z-index: 200; white-space: nowrap; pointer-events: none; }
   .toast.show { transform: translateX(-50%) translateY(0); }
-  .version-tag { text-align: center; padding: 10px; font-size: 11px; color: var(--text-faint); letter-spacing: 0.05em; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .bottom-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px 16px; max-width: 1100px; margin: 0 auto; }
+  .version-tag { font-size: 11px; color: var(--text-faint); letter-spacing: 0.05em; }
+  .update-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 11px; color: var(--text-faint); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color 0.15s, border-color 0.15s; }
+  .update-btn:active { background: var(--bg); }
+  .update-btn.checking { color: var(--green); border-color: var(--green); }
+  .update-btn.up-to-date { color: var(--green); border-color: var(--green); }
+  .update-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -183,7 +190,13 @@
   </main>
 </div>
 
-<div class="version-tag">v1.1</div>
+<div class="bottom-bar">
+  <span class="version-tag" id="version-tag">v1.2</span>
+  <button class="update-btn" id="update-btn" onclick="checkForUpdates()" title="Check for updates">
+    <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+    Check for updates
+  </button>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -421,6 +434,67 @@ function clearLog() {
 
 loadCfg();
 renderLog();
+
+// ── Service Worker registration ──
+const APP_VERSION = '1.2';
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    // When a new service worker takes over, show reload prompt
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+          showUpdateReady();
+        }
+      });
+    });
+  }).catch(() => {});
+
+  // Listen for the SW telling us a new version is ready
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data && e.data.type === 'NEW_VERSION') showUpdateReady();
+  });
+}
+
+function checkForUpdates() {
+  const btn = document.getElementById('update-btn');
+  btn.classList.add('checking');
+  btn.querySelector('svg').style.animation = 'spin 1s linear infinite';
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (reg) {
+        reg.update().then(() => {
+          // Give it 3 seconds to find an update; if nothing, report up to date
+          setTimeout(() => {
+            btn.classList.remove('checking');
+            btn.querySelector('svg').style.animation = '';
+            btn.classList.add('up-to-date');
+            showToast('App is up to date ✓');
+            setTimeout(() => btn.classList.remove('up-to-date'), 3000);
+          }, 3000);
+        });
+      } else {
+        btn.classList.remove('checking');
+        btn.querySelector('svg').style.animation = '';
+        showToast('Reload the page to check for updates');
+      }
+    });
+  } else {
+    btn.classList.remove('checking');
+    btn.querySelector('svg').style.animation = '';
+    showToast('Reload the page to check for updates');
+  }
+}
+
+function showUpdateReady() {
+  // Replace toast with a persistent reload prompt
+  const t = document.getElementById('toast');
+  t.innerHTML = 'New version available — <strong style="cursor:pointer;text-decoration:underline" onclick="location.reload()">tap to update</strong>';
+  t.classList.add('show');
+  // Don't auto-hide this one
+}
 </script>
 </body>
 </html>
