@@ -1,4 +1,119 @@
 <!DOCTYPE html>
+<!--
+================================================================================
+  AIRDRIE OVER 50 CLUB — ATTENDANCE SCANNER
+  index.html
+================================================================================
+
+  WHAT THIS IS:
+  A self-contained single-page web app for scanning member ID card barcodes
+  at club activities. Staff tap "Begin Scanning ID Cards", members walk up and
+  hold their card to the iPad camera, and attendance is logged automatically
+  to a Google Sheet with name and timestamp.
+
+  DEPLOYMENT:
+  - Hosted on GitHub Pages via the 'main' branch root folder
+  - Live URL: https://attendance.airdrieover50club.com
+  - Domain is a CNAME from Wix DNS pointing to GitHub Pages
+  - Two files required in repo root: index.html + sw.js
+  - To deploy a new version: push both files to GitHub main branch.
+    GitHub Pages publishes within ~30 seconds. The service worker then
+    auto-updates the app on any open iPads on next launch.
+
+  TECH STACK:
+  - Pure HTML/CSS/JS — no build tools, no frameworks, no dependencies to install
+  - QuaggaJS2 (@ericblade/quagga2 v1.8.4) — barcode decoder only (CDN)
+  - Native browser getUserMedia API for camera (NOT Quagga's camera mgmt)
+    IMPORTANT: We use getUserMedia directly because Quagga's built-in camera
+    handling fails silently on iOS Safari. Do not switch back to Quagga.init()
+    for camera management — it will break on iPad.
+  - Web Audio API replaced by embedded MP3 (base64) for the scan beep
+  - Service worker (sw.js) for caching + auto-updates
+  - localStorage for offline queue and settings persistence
+
+  BARCODE FORMAT:
+  - Code 128 only
+  - Member name is encoded directly in the barcode value
+  - Scan result is used as-is for the member name in the Google Sheet
+
+  SCAN RELIABILITY FEATURES:
+  - Greyscale + contrast boost applied to each frame before decoding
+  - Quagga2 checksum validation: error score must be < 0.25
+  - 3-consecutive-frame vote confirmation before a scan is accepted
+  - 2-second global cooldown after any accepted scan
+  - 5-second per-card cooldown (same card can't scan twice within 5 seconds)
+
+  OFFLINE QUEUE:
+  - Failed posts (no network) are saved to localStorage key 'ao50_queue'
+  - Queue is retried automatically when the 'online' event fires
+  - Queue is also flushed on app launch if items are pending
+  - Scan log shows amber queue icon for unsynced entries
+
+  GOOGLE SHEETS INTEGRATION:
+  - Uses Google Apps Script deployed as a web app (no OAuth required)
+  - Posts via GET request with ?name=...&timestamp=... parameters
+  - Apps Script URL is hardcoded (see HARDCODED SETTINGS below)
+  - Timestamps are formatted in Mountain Time (America/Edmonton)
+  - Google Apps Script code (in the linked Sheet):
+      function doGet(e) {
+        const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+        sheet.appendRow([
+          e.parameter.name,
+          e.parameter.timestamp
+        ]);
+        return ContentService.createTextOutput("OK");
+      }
+
+  HARDCODED SETTINGS (change here in code, not in the app UI):
+  - Apps Script URL: https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec
+  - Duplicate scan global cooldown: 2000ms (2 seconds)
+  - Duplicate scan per-card cooldown: 5000ms (5 seconds) — stored in cfg.cooldown
+  - Session auto-stop timeout: 30 minutes
+  - Timezone: America/Edmonton (Mountain Time)
+  - Vote threshold (consecutive matching frames required): 3
+  - Checksum error threshold: 0.25
+
+  ASSETS EMBEDDED AS BASE64:
+  - Club logo (Club_Logo_Established_1968.png) — resized to 80px height,
+    black background removed, embedded as data:image/png in the logo-mark div
+  - Scanner beep sound (freesound_community-store-scanner-beep-90395.mp3)
+    embedded as data:audio/mpeg in the BEEP_SRC constant
+
+  AUTO-UPDATE BEHAVIOUR (service worker):
+  - On launch: checks GitHub for a newer sw.js immediately
+  - Every 60 seconds: rechecks while app is open
+  - Update found + no active scan session: reloads silently and immediately
+  - Update found + session is active: waits until session stops, then reloads
+  - IMPORTANT: When deploying a new version, bump CACHE_VERSION in sw.js
+    (e.g. 'ao50-v1.4' → 'ao50-v1.5') to trigger cache invalidation on all
+    open devices. Version in index.html and sw.js must be kept in sync.
+
+  iOS / SAFARI NOTES:
+  - App is designed as an iPad home screen Web Clip (Add to Home Screen)
+  - Apple Touch Icon is embedded as base64 in <head> (180x180px)
+  - App title on home screen: "Over 50 Check-in"
+  - Audio requires the AudioContext to be unlocked via a user gesture —
+    handled by playing a silent buffer on the "Begin Scanning" button tap
+  - Camera requires HTTPS (GitHub Pages provides this automatically)
+  - playsinline attribute is set on <video> to prevent iOS fullscreen takeover
+
+  VERSION HISTORY:
+  v1.0 — Initial release. Native getUserMedia camera, QuaggaJS2 decode,
+          blue theme, club logo, MP3 beep, green checkmark overlay,
+          Google Sheets integration via Apps Script.
+  v1.1 — Improved scan reliability: contrast boost, checksum validation,
+          3-frame consecutive vote confirmation.
+  v1.2 — Added service worker for offline caching and auto-updates.
+          Added subtle "Check for updates" button in bottom bar.
+  v1.3 — Added offline queue: failed scans saved to localStorage and
+          retried automatically when connectivity returns.
+  v1.4 — Removed manual "Check for updates" button. App now checks for
+          updates automatically on launch and every 60 seconds. Updates
+          apply immediately if no session is active, or waits until
+          session ends if scanning is in progress.
+
+================================================================================
+-->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
