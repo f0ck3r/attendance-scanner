@@ -87,7 +87,7 @@
   - Update found + no active scan session: reloads silently and immediately
   - Update found + session is active: waits until session stops, then reloads
   - IMPORTANT: When deploying a new version, bump CACHE_VERSION in sw.js
-    (e.g. 'ao50-v1.6' → 'ao50-v1.6') to trigger cache invalidation on all
+    (e.g. 'ao50-v1.7' → 'ao50-v1.7') to trigger cache invalidation on all
     open devices. Version in index.html and sw.js must be kept in sync.
 
   iOS / SAFARI NOTES:
@@ -116,6 +116,7 @@
   v1.6 — Scan speed improvements: JPEG frame encoding (3x faster than PNG),
           centre-crop to 60% of frame, 8fps tick rate, vote threshold
           reduced from 3 to 2 frames.
+  v1.7 — Added haptic feedback (80ms vibration) on successful scan.
 
 ================================================================================
 -->
@@ -308,7 +309,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.6</span>
+  <span class="version-tag" id="version-tag">v1.7</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -493,6 +494,8 @@ function handleScan(value) {
   lastScanTime = now;
   lastScanned[value] = now;
   beep();
+  // Haptic feedback — works on iOS Safari and Android Chrome
+  if (navigator.vibrate) navigator.vibrate(80);
   const flash = document.getElementById('flash');
   flash.classList.add('active');
   setTimeout(() => flash.classList.remove('active'), 150);
