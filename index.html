@@ -22,7 +22,7 @@
 
   TECH STACK:
   - Pure HTML/CSS/JS — no build tools, no frameworks, no dependencies to install
-  - QuaggaJS2 (@ericblade/quagga2 v1.8.4) — barcode decoder only (CDN)
+  - QuaggaJS2 (@ericblade/quagga2 v1.9.4) — barcode decoder only (CDN)
   - Native browser getUserMedia API for camera (NOT Quagga's camera mgmt)
     IMPORTANT: We use getUserMedia directly because Quagga's built-in camera
     handling fails silently on iOS Safari. Do not switch back to Quagga.init()
@@ -87,7 +87,7 @@
   - Update found + no active scan session: reloads silently and immediately
   - Update found + session is active: waits until session stops, then reloads
   - IMPORTANT: When deploying a new version, bump CACHE_VERSION in sw.js
-    (e.g. 'ao50-v1.8' → 'ao50-v1.8') to trigger cache invalidation on all
+    (e.g. 'ao50-v1.9' → 'ao50-v1.9') to trigger cache invalidation on all
     open devices. Version in index.html and sw.js must be kept in sync.
 
   iOS / SAFARI NOTES:
@@ -116,10 +116,13 @@
   v1.6 — Scan speed improvements: JPEG frame encoding (3x faster than PNG),
           centre-crop to 60% of frame, 8fps tick rate, vote threshold
           reduced from 3 to 2 frames.
-  v1.8 — Added haptic feedback (80ms vibration) on successful scan.
-  v1.8 — Name proper-case normalisation. Error logging to admin sheet
+  v1.9 — Added haptic feedback (80ms vibration) on successful scan.
+  v1.9 — Name proper-case normalisation. Error logging to admin sheet
           (persistent via localStorage, survives reboots). Session
           start/stop logged. Global JS error catch.
+  v1.9 — Production attendance URL. Column order flipped (timestamp → A,
+          name → B). Persistent daily scan counter independent of log
+          clears, survives reboots, resets at midnight.
 
 ================================================================================
 -->
@@ -312,7 +315,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.8</span>
+  <span class="version-tag" id="version-tag">v1.9</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -328,11 +331,39 @@ let lastScanned = {};
 let lastScanTime = 0;
 let voteBuffer = [];        // consecutive matching reads required before accepting
 const VOTE_THRESHOLD = 2;   // 2 consecutive matching frames required (checksum handles accuracy)
+
+// ── Persistent daily scan counter ──
+// Stored independently of the scan log so clearing the log doesn't reset it.
+// Survives app close, Safari force-quit, and reboots via localStorage.
+function getTodayKey() {
+  return 'ao50_daily_' + new Date().toISOString().slice(0, 10); // e.g. ao50_daily_2025-01-14
+}
+function getDailyCount() {
+  try { return parseInt(localStorage.getItem(getTodayKey()) || '0'); } catch(e) { return 0; }
+}
+function incrementDailyCount() {
+  try {
+    const key = getTodayKey();
+    const count = getDailyCount() + 1;
+    localStorage.setItem(key, count);
+    // Clean up previous days (keep only last 7)
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('ao50_daily_') && k !== key)
+      .sort().slice(0, -6) // keep last 6 old days, remove anything older
+      .forEach(k => localStorage.removeItem(k));
+    return count;
+  } catch(e) { return getDailyCount(); }
+}
+function updateDailyCountBadge() {
+  const count = getDailyCount();
+  const pill = document.getElementById('count-pill');
+  if (pill) pill.textContent = count + (count === 1 ? ' today' : ' today');
+}
 // cfg.errorUrl = current sheet (admin/error log)
 // cfg.attendanceUrl = production attendance sheet (set in v1.9)
 let cfg = {
   errorUrl: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec',
-  attendanceUrl: '', // populated in v1.9
+  attendanceUrl: 'https://script.google.com/macros/s/AKfycbxIWPOiEVVqUxrRL54aK3XjkP66Bh9Ikl4RxoAtSDwLaBdhdztLX8_BadrThOryLCI-qQ/exec',
   cooldown: 5000
 };
 
@@ -507,6 +538,8 @@ function handleScan(value) {
   if (lastScanned[value] && (now - lastScanned[value]) < cfg.cooldown) return;
   lastScanTime = now;
   lastScanned[value] = now;
+  incrementDailyCount();
+  updateDailyCountBadge();
   beep();
   // Haptic feedback — works on iOS Safari and Android Chrome
   if (navigator.vibrate) navigator.vibrate(80);
@@ -568,8 +601,8 @@ function toProperCase(str) {
 async function postEntry(id, name, time) {
   const properName = toProperCase(name);
   const params = new URLSearchParams({
-    name: properName,
     timestamp: new Date(time).toLocaleString('en-CA', { timeZone: 'America/Edmonton' }),
+    name: properName,
     token: 'ao50club2025'
   });
   const url = cfg.attendanceUrl || cfg.errorUrl; // fallback to error URL if attendance not set yet
@@ -716,8 +749,8 @@ function renderLog() {
         : '<svg viewBox="0 0 24 24" style="stroke:#d97706;fill:none;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
     return '<div class="log-item"><div class="avatar">' + initials(e.name) + '</div><div class="log-meta"><div class="log-name">' + escHtml(e.name) + '</div><div class="log-time">' + t + '</div></div><div class="status-icon">' + icon + '</div></div>';
   }).join('');
-  const today = scanLog.filter(e => e.time.toDateString() === new Date().toDateString()).length;
-  document.getElementById('count-pill').textContent = today + ' today';
+  // Count pill is driven by persistent daily counter, not scan log
+  updateDailyCountBadge();
 }
 function updateEntryStatus(id, status) {
   const e = scanLog.find(e => e.id === id);
@@ -730,6 +763,7 @@ function clearLog() {
 
 loadCfg();
 renderLog();
+updateDailyCountBadge(); // restore daily count from localStorage on launch
 
 // Global JS error catch — logs unexpected errors to admin sheet
 window.addEventListener('error', function(e) {
