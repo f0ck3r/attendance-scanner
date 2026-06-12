@@ -128,9 +128,11 @@
           increased (1.5 → 2.2), tick rate eased to 150ms for better
           camera sensor exposure time.
   v2.2 — Manual name entry field (types name, tap Add or press Enter).
-          Camera resolution lowered to 640x480 for faster decode and
-          better low-light sensitivity. Tick rate pushed to 80ms (~12fps)
-          since iPad is permanently plugged in.
+          Tick rate pushed to 80ms (~12fps) since iPad is permanently
+          plugged in.
+  v2.3 — Restored 1280x720 high resolution for better decode accuracy.
+          Widened crop zone to 70% of frame. Quagga input size increased
+          to 1280 to match full resolution.
 
 ================================================================================
 -->
@@ -337,7 +339,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.2</span>
+  <span class="version-tag" id="version-tag">v2.3</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -441,8 +443,8 @@ function startSession() {
   navigator.mediaDevices.getUserMedia({
     video: {
       facingMode: { ideal: 'environment' },
-      width: { ideal: 640 },   // lower res = faster decode + better low-light sensitivity
-      height: { ideal: 480 }
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
     },
     audio: false
   }).then(function(mediaStream) {
@@ -503,16 +505,18 @@ function scanFrames() {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // Crop to the centre 60% of the frame vertically — this is where
-      // someone naturally holds a card. Less pixels = faster encode + decode.
-      const cropTop = Math.floor(vh * 0.2);
-      const cropHeight = Math.floor(vh * 0.6);
+      // Crop to centre 70% of frame vertically (wider than before for easier card placement)
+      const cropTop = Math.floor(vh * 0.15);
+      const cropHeight = Math.floor(vh * 0.70);
 
       canvas.width = vw;
       canvas.height = cropHeight;
       ctx.drawImage(video, 0, cropTop, vw, cropHeight, 0, 0, vw, cropHeight);
 
-      // Greyscale + contrast boost on the cropped region only
+      // Low-light image processing:
+      // 1. Convert to greyscale
+      // 2. Moderate brightness lift to compensate for dim environment
+      // 3. Aggressive contrast stretch to make barcode bars pop
       const imageData = ctx.getImageData(0, 0, vw, cropHeight);
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
@@ -522,6 +526,7 @@ function scanFrames() {
         const lifted = Math.min(255, grey + 30);
         const contrasted = Math.min(255, Math.max(0, (lifted - 128) * 2.2 + 128));
         d[i] = d[i+1] = d[i+2] = contrasted;
+        // d[i+3] alpha unchanged
       }
       ctx.putImageData(imageData, 0, 0);
 
@@ -532,7 +537,7 @@ function scanFrames() {
             debug: { drawBoundingBox: false, showFrequency: false, drawScanline: false }
           },
           locate: true,
-          inputStream: { size: 800 },
+          inputStream: { size: 1280 },
           // JPEG at 0.85 quality is ~3x faster to encode than PNG,
           // with no meaningful quality loss for barcode detection
           src: canvas.toDataURL('image/jpeg', 0.85)
