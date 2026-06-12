@@ -124,6 +124,9 @@
           name → B). Persistent daily scan counter independent of log
           clears, survives reboots, resets at midnight.
   v2.0 — Camera feed zoomed in 20% by default for easier barcode framing.
+  v2.1 — Low-light optimisation: brightness lift (+30), contrast factor
+          increased (1.5 → 2.2), tick rate eased to 150ms for better
+          camera sensor exposure time.
 
 ================================================================================
 -->
@@ -316,7 +319,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.0</span>
+  <span class="version-tag" id="version-tag">v2.1</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -492,7 +495,10 @@ function scanFrames() {
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
         const grey = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
-        const contrasted = Math.min(255, Math.max(0, (grey - 128) * 1.5 + 128));
+        // Brightness lift (+30) helps in low-light before contrast stretch
+        // Contrast factor 2.2 (up from 1.5) makes dark bars pop against dim backgrounds
+        const lifted = Math.min(255, grey + 30);
+        const contrasted = Math.min(255, Math.max(0, (lifted - 128) * 2.2 + 128));
         d[i] = d[i+1] = d[i+2] = contrasted;
       }
       ctx.putImageData(imageData, 0, 0);
@@ -528,7 +534,7 @@ function scanFrames() {
         });
       } catch(e) {}
     }
-    if (sessionActive) setTimeout(tick, 125); // ~8fps
+    if (sessionActive) setTimeout(tick, 150); // ~6.5fps — slightly slower for better low-light exposure
   }
   tick();
 }
