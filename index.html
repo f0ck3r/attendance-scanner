@@ -106,11 +106,6 @@
   .version-tag { font-size: 11px; color: var(--text-faint); letter-spacing: 0.05em; }
   .queue-badge { font-size: 11px; color: #d97706; background: #fef3c7; border: 1px solid #fde68a; border-radius: 999px; padding: 3px 8px; }
   .status-strip.warn { color: #d97706; background: #fffbeb; }
-  .update-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 11px; color: var(--text-faint); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color 0.15s, border-color 0.15s; }
-  .update-btn:active { background: var(--bg); }
-  .update-btn.checking { color: var(--green); border-color: var(--green); }
-  .update-btn.up-to-date { color: var(--green); border-color: var(--green); }
-  .update-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -193,12 +188,8 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.3</span>
+  <span class="version-tag" id="version-tag">v1.4</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
-  <button class="update-btn" id="update-btn" onclick="checkForUpdates()" title="Check for updates">
-    <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-    Check for updates
-  </button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -301,6 +292,7 @@ function stopSession() {
   document.getElementById('btn-start').style.display = 'flex';
   document.getElementById('btn-stop').style.display = 'none';
   setStatus('Session ended', '');
+  if (updatePending) window.location.reload();
 }
 
 // Frame scanning — getUserMedia feeds video, Quagga2 decodes frames
@@ -526,65 +518,45 @@ function clearLog() {
 loadCfg();
 renderLog();
 
-// ── Service Worker registration ──
-const APP_VERSION = '1.2';
+// ── Service Worker registration & auto-update ──
+const APP_VERSION = '1.4';
+let updatePending = false;
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').then(reg => {
-    // When a new service worker takes over, show reload prompt
+    // Check for an update immediately on load, and every 60 seconds after
+    reg.update();
+    setInterval(() => reg.update(), 60000);
+
     reg.addEventListener('updatefound', () => {
       const newWorker = reg.installing;
       newWorker.addEventListener('statechange', () => {
-        if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-          showUpdateReady();
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          // New version is ready — reload if safe, otherwise wait
+          applyUpdate();
         }
       });
     });
   }).catch(() => {});
 
-  // Listen for the SW telling us a new version is ready
+  // SW signals a new version is active after activation
   navigator.serviceWorker.addEventListener('message', e => {
-    if (e.data && e.data.type === 'NEW_VERSION') showUpdateReady();
+    if (e.data && e.data.type === 'NEW_VERSION') applyUpdate();
+  });
+
+  // When SW controller changes (i.e. new SW took over), reload to use new files
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!sessionActive) window.location.reload();
   });
 }
 
-function checkForUpdates() {
-  const btn = document.getElementById('update-btn');
-  btn.classList.add('checking');
-  btn.querySelector('svg').style.animation = 'spin 1s linear infinite';
-
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistration().then(reg => {
-      if (reg) {
-        reg.update().then(() => {
-          // Give it 3 seconds to find an update; if nothing, report up to date
-          setTimeout(() => {
-            btn.classList.remove('checking');
-            btn.querySelector('svg').style.animation = '';
-            btn.classList.add('up-to-date');
-            showToast('App is up to date ✓');
-            setTimeout(() => btn.classList.remove('up-to-date'), 3000);
-          }, 3000);
-        });
-      } else {
-        btn.classList.remove('checking');
-        btn.querySelector('svg').style.animation = '';
-        showToast('Reload the page to check for updates');
-      }
-    });
+function applyUpdate() {
+  if (sessionActive) {
+    // Don't interrupt an active session — flag it and reload when they stop
+    updatePending = true;
   } else {
-    btn.classList.remove('checking');
-    btn.querySelector('svg').style.animation = '';
-    showToast('Reload the page to check for updates');
+    window.location.reload();
   }
-}
-
-function showUpdateReady() {
-  // Replace toast with a persistent reload prompt
-  const t = document.getElementById('toast');
-  t.innerHTML = 'New version available — <strong style="cursor:pointer;text-decoration:underline" onclick="location.reload()">tap to update</strong>';
-  t.classList.add('show');
-  // Don't auto-hide this one
 }
 </script>
 </body>
