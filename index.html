@@ -127,6 +127,10 @@
   v2.1 — Low-light optimisation: brightness lift (+30), contrast factor
           increased (1.5 → 2.2), tick rate eased to 150ms for better
           camera sensor exposure time.
+  v2.2 — Manual name entry field (types name, tap Add or press Enter).
+          Camera resolution lowered to 640x480 for faster decode and
+          better low-light sensitivity. Tick rate pushed to 80ms (~12fps)
+          since iPad is permanently plugged in.
 
 ================================================================================
 -->
@@ -227,7 +231,12 @@
   .modal-actions { display: flex; gap: 8px; margin-top: 20px; }
   .btn-save { flex: 1; padding: 13px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 15px; font-weight: 600; cursor: pointer; }
   .btn-cancel { padding: 13px 18px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 15px; cursor: pointer; }
-  .clear-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12px; color: var(--text-muted); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .manual-entry { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--bg); }
+  .manual-entry input { flex: 1; padding: 9px 12px; font-size: 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); -webkit-appearance: none; }
+  .manual-entry input:focus { outline: none; border-color: var(--green); }
+  .btn-manual { padding: 9px 14px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 5px; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .btn-manual:active { background: var(--green-dark); }
+  .btn-manual svg { width: 14px; height: 14px; fill: none; stroke: white; stroke-width: 2.5; stroke-linecap: round; }
   .clear-btn:active { background: var(--bg); }
   .clear-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1f2937; color: white; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 500; transition: transform 0.3s ease; z-index: 200; white-space: nowrap; pointer-events: none; }
@@ -294,6 +303,15 @@
           Stop
         </button>
       </div>
+      <div class="manual-entry">
+        <input type="text" id="manual-name" placeholder="Manual entry — type name and tap Add"
+          autocorrect="off" autocapitalize="words" spellcheck="false"
+          onkeydown="if(event.key==='Enter') submitManual()" />
+        <button class="btn-manual" onclick="submitManual()">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add
+        </button>
+      </div>
       <div class="status-strip" id="status">Ready — tap Begin Scanning to start</div>
     </div>
 
@@ -319,7 +337,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.1</span>
+  <span class="version-tag" id="version-tag">v2.2</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -421,7 +439,11 @@ function startSession() {
   unlockAudio();
 
   navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 640 },   // lower res = faster decode + better low-light sensitivity
+      height: { ideal: 480 }
+    },
     audio: false
   }).then(function(mediaStream) {
     stream = mediaStream;
@@ -534,9 +556,30 @@ function scanFrames() {
         });
       } catch(e) {}
     }
-    if (sessionActive) setTimeout(tick, 150); // ~6.5fps — slightly slower for better low-light exposure
+    if (sessionActive) setTimeout(tick, 80); // ~12fps — battery not a concern, iPad plugged in
   }
   tick();
+}
+
+function submitManual() {
+  const input = document.getElementById('manual-name');
+  const raw = input.value.trim();
+  if (!raw) return;
+  const name = toProperCase(raw);
+  input.value = '';
+  input.blur();
+  // Reuse handleScan logic but bypass cooldown/vote — manual entry is always intentional
+  const now = Date.now();
+  const entry = { id: now, name: name, time: new Date(), status: 'pending' };
+  incrementDailyCount();
+  updateDailyCountBadge();
+  beep();
+  if (navigator.vibrate) navigator.vibrate(80);
+  scanLog.unshift(entry);
+  renderLog();
+  postToSheet(entry);
+  logError('INFO', 'Manual entry: ' + name);
+  showToast('Added: ' + name);
 }
 
 function handleScan(value) {
