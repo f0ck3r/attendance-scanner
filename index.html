@@ -22,7 +22,7 @@
 
   TECH STACK:
   - Pure HTML/CSS/JS — no build tools, no frameworks, no dependencies to install
-  - QuaggaJS2 (@ericblade/quagga2 v1.9.4) — barcode decoder only (CDN)
+  - QuaggaJS2 (@ericblade/quagga2 v1.8.4) — barcode decoder only (CDN)
   - Native browser getUserMedia API for camera (NOT Quagga's camera mgmt)
     IMPORTANT: We use getUserMedia directly because Quagga's built-in camera
     handling fails silently on iOS Safari. Do not switch back to Quagga.init()
@@ -87,7 +87,7 @@
   - Update found + no active scan session: reloads silently and immediately
   - Update found + session is active: waits until session stops, then reloads
   - IMPORTANT: When deploying a new version, bump CACHE_VERSION in sw.js
-    (e.g. 'ao50-v1.9' → 'ao50-v1.9') to trigger cache invalidation on all
+    (e.g. 'ao50-v2.0' → 'ao50-v2.1') to trigger cache invalidation on all
     open devices. Version in index.html and sw.js must be kept in sync.
 
   iOS / SAFARI NOTES:
@@ -116,13 +116,14 @@
   v1.6 — Scan speed improvements: JPEG frame encoding (3x faster than PNG),
           centre-crop to 60% of frame, 8fps tick rate, vote threshold
           reduced from 3 to 2 frames.
-  v1.9 — Added haptic feedback (80ms vibration) on successful scan.
-  v1.9 — Name proper-case normalisation. Error logging to admin sheet
+  v1.7 — Added haptic feedback (80ms vibration) on successful scan.
+  v1.8 — Name proper-case normalisation. Error logging to admin sheet
           (persistent via localStorage, survives reboots). Session
           start/stop logged. Global JS error catch.
   v1.9 — Production attendance URL. Column order flipped (timestamp → A,
           name → B). Persistent daily scan counter independent of log
           clears, survives reboots, resets at midnight.
+  v2.0 — Camera feed zoomed in 20% by default for easier barcode framing.
 
 ================================================================================
 -->
@@ -167,7 +168,7 @@
   .card-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
   .card-label svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .camera-wrap { position: relative; background: #0a0a0a; aspect-ratio: 4/3; overflow: hidden; }
-  #video { width: 100%; height: 100%; object-fit: cover; display: none; }
+  #video { width: 100%; height: 100%; object-fit: cover; display: none; transform: scale(1.2); transform-origin: center center; }
   .camera-idle-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #555; background: #0a0a0a; }
   .camera-idle-state svg { width: 40px; height: 40px; fill: none; stroke: #555; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.5; }
   .camera-idle-state p { font-size: 13px; opacity: 0.6; }
@@ -315,7 +316,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v1.9</span>
+  <span class="version-tag" id="version-tag">v2.0</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -360,7 +361,7 @@ function updateDailyCountBadge() {
   if (pill) pill.textContent = count + (count === 1 ? ' today' : ' today');
 }
 // cfg.errorUrl = current sheet (admin/error log)
-// cfg.attendanceUrl = production attendance sheet (set in v1.9)
+// cfg.attendanceUrl = production attendance sheet (set in v2.0)
 let cfg = {
   errorUrl: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec',
   attendanceUrl: 'https://script.google.com/macros/s/AKfycbxIWPOiEVVqUxrRL54aK3XjkP66Bh9Ikl4RxoAtSDwLaBdhdztLX8_BadrThOryLCI-qQ/exec',
