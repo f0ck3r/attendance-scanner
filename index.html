@@ -135,6 +135,7 @@
           to 1280 to match full resolution.
   v2.4 — Manual entry moved to prominent full-width bar at top of app.
   v2.5 — Suppressed false-alarm SW load failure errors from error log.
+  v2.6 — Manual entries now appended with "(Manually Entered)" in the sheet.
 
 ================================================================================
 -->
@@ -354,7 +355,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.5</span>
+  <span class="version-tag" id="version-tag">v2.6</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -585,7 +586,7 @@ function submitManual() {
   const input = document.getElementById('manual-name');
   const raw = input.value.trim();
   if (!raw) return;
-  const name = toProperCase(raw);
+  const name = toProperCase(raw) + ' (Manually Entered)';
   input.value = '';
   input.blur();
   // Reuse handleScan logic but bypass cooldown/vote — manual entry is always intentional
