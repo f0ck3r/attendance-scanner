@@ -136,6 +136,11 @@
   v2.4 — Manual entry moved to prominent full-width bar at top of app.
   v2.5 — Suppressed false-alarm SW load failure errors from error log.
   v2.6 — Manual entries now appended with "(Manually Entered)" in the sheet.
+  v2.7 — Memory management: scan loop generation tracking prevents stale
+          callbacks, periodic 10-min loop restart clears Quagga memory,
+          adaptive tick rate slows to 200ms after 30s idle, scan log
+          capped at 50 entries. Error log filters: "operation aborted"
+          and cross-origin "Script error" suppressed.
 
 ================================================================================
 -->
@@ -355,7 +360,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.6</span>
+  <span class="version-tag" id="version-tag">v2.7</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -370,7 +375,11 @@ let scanLog = [];
 let lastScanned = {};
 let lastScanTime = 0;
 let voteBuffer = [];        // consecutive matching reads required before accepting
-const VOTE_THRESHOLD = 2;   // 2 consecutive matching frames required (checksum handles accuracy)
+const VOTE_THRESHOLD = 2;
+let loopRestartInterval = null; // periodic scan loop restart for memory management
+let idleTickCount = 0;          // frames since last successful scan (for adaptive rate)
+const IDLE_THRESHOLD = 375;     // ~30 seconds at 80ms before slowing to idle rate
+const SCAN_LOG_MAX = 50;        // max entries kept in memory/DOM   // 2 consecutive matching frames required (checksum handles accuracy)
 
 // ── Persistent daily scan counter ──
 // Stored independently of the scan log so clearing the log doesn't reset it.
@@ -476,8 +485,16 @@ function startSession() {
       document.getElementById('btn-stop').style.display = 'flex';
       sessionTimeout = setTimeout(stopSession, 30 * 60 * 1000);
       setStatus('Scanning — hold member card steady in view', 'ok');
-    logError('INFO', 'Session started');
+      logError('INFO', 'Session started');
       scanFrames();
+      // Restart scan loop every 10 minutes to clear any Quagga memory accumulation
+      loopRestartInterval = setInterval(() => {
+        if (sessionActive) {
+          voteBuffer = [];
+          idleTickCount = 0;
+          scanFrames(); // start a fresh loop iteration
+        }
+      }, 10 * 60 * 1000);
     });
   }).catch(function(err) {
     const errMsg = 'Camera error: ' + (err.message || err);
@@ -490,7 +507,9 @@ function stopSession() {
   if (!sessionActive) return;
   sessionActive = false;
   voteBuffer = [];
+  idleTickCount = 0;
   if (sessionTimeout) { clearTimeout(sessionTimeout); sessionTimeout = null; }
+  if (loopRestartInterval) { clearInterval(loopRestartInterval); loopRestartInterval = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   const video = document.getElementById('video');
   video.srcObject = null;
@@ -506,45 +525,48 @@ function stopSession() {
 }
 
 // Frame scanning — getUserMedia feeds video, Quagga2 decodes frames
-// Uses a confidence voting system: same value must appear 2 times in a row
-// before being accepted. Checksum validation handles accuracy; voting handles
-// the remaining edge cases. 2 votes keeps confirmation fast (~250ms).
+// Memory management features:
+//   - Adaptive tick rate: 80ms (~12fps) active, 200ms idle after 30s no scan
+//   - Periodic full loop restart every 10 min clears Quagga memory accumulation
+//   - Scan log capped at SCAN_LOG_MAX entries to limit DOM growth
+// Accuracy features:
+//   - 2-frame vote confirmation + checksum validation
+//   - Greyscale + brightness lift + contrast stretch for low light
+
+let scanFramesGeneration = 0; // increments on each restart to cancel stale loops
 
 function scanFrames() {
+  const myGeneration = ++scanFramesGeneration;
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
   function tick() {
-    if (!sessionActive) return;
+    // Cancel if session ended or a newer loop started
+    if (!sessionActive || scanFramesGeneration !== myGeneration) return;
+
     if (video.readyState >= 2 && video.videoWidth > 0) {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
-      // Crop to centre 70% of frame vertically (wider than before for easier card placement)
       const cropTop = Math.floor(vh * 0.15);
       const cropHeight = Math.floor(vh * 0.70);
-
       canvas.width = vw;
       canvas.height = cropHeight;
       ctx.drawImage(video, 0, cropTop, vw, cropHeight, 0, 0, vw, cropHeight);
 
-      // Low-light image processing:
-      // 1. Convert to greyscale
-      // 2. Moderate brightness lift to compensate for dim environment
-      // 3. Aggressive contrast stretch to make barcode bars pop
+      // Low-light: greyscale + brightness lift + contrast stretch
       const imageData = ctx.getImageData(0, 0, vw, cropHeight);
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
         const grey = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
-        // Brightness lift (+30) helps in low-light before contrast stretch
-        // Contrast factor 2.2 (up from 1.5) makes dark bars pop against dim backgrounds
         const lifted = Math.min(255, grey + 30);
         const contrasted = Math.min(255, Math.max(0, (lifted - 128) * 2.2 + 128));
         d[i] = d[i+1] = d[i+2] = contrasted;
-        // d[i+3] alpha unchanged
       }
       ctx.putImageData(imageData, 0, 0);
+
+      idleTickCount++;
 
       try {
         Quagga.decodeSingle({
@@ -554,10 +576,9 @@ function scanFrames() {
           },
           locate: true,
           inputStream: { size: 1280 },
-          // JPEG at 0.85 quality is ~3x faster to encode than PNG,
-          // with no meaningful quality loss for barcode detection
           src: canvas.toDataURL('image/jpeg', 0.85)
         }, function(result) {
+          if (scanFramesGeneration !== myGeneration) return; // stale callback
           const code = result && result.codeResult && result.codeResult.code;
           const validChecksum = result && result.codeResult &&
             result.codeResult.startInfo &&
@@ -569,6 +590,7 @@ function scanFrames() {
             if (voteBuffer.length > VOTE_THRESHOLD) voteBuffer.shift();
             if (voteBuffer.length === VOTE_THRESHOLD && voteBuffer.every(v => v === code)) {
               voteBuffer = [];
+              idleTickCount = 0; // reset idle counter on successful scan
               handleScan(code);
             }
           } else {
@@ -577,7 +599,11 @@ function scanFrames() {
         });
       } catch(e) {}
     }
-    if (sessionActive) setTimeout(tick, 80); // ~12fps — battery not a concern, iPad plugged in
+
+    if (!sessionActive || scanFramesGeneration !== myGeneration) return;
+    // Adaptive rate: slow down after 30s idle to save CPU, snap back on activity
+    const rate = idleTickCount > IDLE_THRESHOLD ? 200 : 80;
+    setTimeout(tick, rate);
   }
   tick();
 }
@@ -622,6 +648,7 @@ function handleScan(value) {
   setTimeout(() => success.classList.remove('active'), 900);
   const entry = { id: now, name: value, time: new Date(), status: 'pending' };
   scanLog.unshift(entry);
+  if (scanLog.length > SCAN_LOG_MAX) scanLog = scanLog.slice(0, SCAN_LOG_MAX); // cap memory
   renderLog();
   postToSheet(entry);
 }
@@ -838,12 +865,15 @@ updateDailyCountBadge(); // restore daily count from localStorage on launch
 
 // Global JS error catch — logs unexpected errors to admin sheet
 window.addEventListener('error', function(e) {
+  // Ignore cross-origin script errors (e.g. Quagga CDN) — no actionable info
+  if (!e.message || e.message === 'Script error.' || e.message === 'Script error') return;
   logError('ERROR', 'JS error: ' + e.message + ' (' + (e.filename || '') + ':' + (e.lineno || '') + ')');
 });
 window.addEventListener('unhandledrejection', function(e) {
   const msg = e.reason && e.reason.message ? e.reason.message : String(e.reason);
-  // Ignore service worker load failures — expected on flaky connections, harmless
+  // Ignore known harmless errors
   if (msg.includes('sw.js') || msg.includes('serviceWorker') || msg.includes('Service Worker')) return;
+  if (msg.includes('aborted') || msg.includes('The operation was aborted')) return;
   logError('ERROR', 'Unhandled promise: ' + msg);
 });
 
