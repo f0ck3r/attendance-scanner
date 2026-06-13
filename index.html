@@ -141,6 +141,10 @@
           adaptive tick rate slows to 200ms after 30s idle, scan log
           capped at 50 entries. Error log filters: "operation aborted"
           and cross-origin "Script error" suppressed.
+  v2.8 — Verbose logging mode (VERBOSE=true): decode attempts, vote buffer
+          progress, cooldown rejections, camera stream details, session
+          metrics, memory cycle events, queue events, connectivity detail,
+          app lifecycle, page visibility, SW events.
 
 ================================================================================
 -->
@@ -360,7 +364,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.7</span>
+  <span class="version-tag" id="version-tag">v2.8</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -379,7 +383,10 @@ const VOTE_THRESHOLD = 2;
 let loopRestartInterval = null; // periodic scan loop restart for memory management
 let idleTickCount = 0;          // frames since last successful scan (for adaptive rate)
 const IDLE_THRESHOLD = 375;     // ~30 seconds at 80ms before slowing to idle rate
-const SCAN_LOG_MAX = 50;        // max entries kept in memory/DOM   // 2 consecutive matching frames required (checksum handles accuracy)
+const SCAN_LOG_MAX = 50;        // max entries kept in memory/DOM
+const VERBOSE = true;           // verbose logging — set false once stable
+let sessionStartTime = null;    // for session duration metric
+let sessionScanCount = 0;       // scans this session for metrics   // 2 consecutive matching frames required (checksum handles accuracy)
 
 // ── Persistent daily scan counter ──
 // Stored independently of the scan log so clearing the log doesn't reset it.
@@ -479,20 +486,27 @@ function startSession() {
     video.style.display = 'block';
     video.play().then(() => {
       sessionActive = true;
+      sessionStartTime = Date.now();
+      sessionScanCount = 0;
       document.getElementById('idle-state').style.display = 'none';
       document.getElementById('scan-overlay').style.display = 'block';
       document.getElementById('btn-start').style.display = 'none';
       document.getElementById('btn-stop').style.display = 'flex';
       sessionTimeout = setTimeout(stopSession, 30 * 60 * 1000);
       setStatus('Scanning — hold member card steady in view', 'ok');
-      logError('INFO', 'Session started');
+      // Log camera stream details — actual resolution negotiated by iPad
+      const track = stream.getVideoTracks()[0];
+      const settings = track ? track.getSettings() : {};
+      logError('INFO', 'Session started — camera: ' + (settings.width || '?') + 'x' + (settings.height || '?') +
+        ' @ ' + (settings.frameRate ? settings.frameRate.toFixed(1) : '?') + 'fps, facing: ' + (settings.facingMode || '?'));
       scanFrames();
       // Restart scan loop every 10 minutes to clear any Quagga memory accumulation
       loopRestartInterval = setInterval(() => {
         if (sessionActive) {
           voteBuffer = [];
           idleTickCount = 0;
-          scanFrames(); // start a fresh loop iteration
+          logVerbose('Scan loop restarted (10-min memory cycle) — session scans so far: ' + sessionScanCount);
+          scanFrames();
         }
       }, 10 * 60 * 1000);
     });
@@ -519,7 +533,11 @@ function stopSession() {
   document.getElementById('btn-start').style.display = 'flex';
   document.getElementById('btn-stop').style.display = 'none';
   const scanCount = scanLog.filter(e => e.time && new Date(e.time).toDateString() === new Date().toDateString()).length;
-  logError('INFO', 'Session ended — ' + scanCount + ' scan' + (scanCount !== 1 ? 's' : '') + ' this session');
+  const durationMs = sessionStartTime ? Date.now() - sessionStartTime : 0;
+  const durationMin = (durationMs / 60000).toFixed(1);
+  const scansPerMin = durationMs > 0 ? (sessionScanCount / (durationMs / 60000)).toFixed(1) : '0';
+  logError('INFO', 'Session ended — ' + sessionScanCount + ' scan' + (sessionScanCount !== 1 ? 's' : '') +
+    ' in ' + durationMin + 'min (' + scansPerMin + '/min)');
   setStatus('Session ended', '');
   if (updatePending) window.location.reload();
 }
@@ -590,9 +608,17 @@ function scanFrames() {
             if (voteBuffer.length > VOTE_THRESHOLD) voteBuffer.shift();
             if (voteBuffer.length === VOTE_THRESHOLD && voteBuffer.every(v => v === code)) {
               voteBuffer = [];
-              idleTickCount = 0; // reset idle counter on successful scan
+              idleTickCount = 0;
+              logVerbose('Barcode confirmed: "' + code + '" (2/2 votes passed)');
               handleScan(code);
+            } else {
+              logVerbose('Barcode candidate: "' + code + '" (' + voteBuffer.length + '/' + VOTE_THRESHOLD + ' votes)');
             }
+          } else if (code) {
+            // Code found but failed checksum
+            const errScore = result.codeResult.decodedCodes.slice(-1)[0].error;
+            logVerbose('Barcode rejected (checksum fail): "' + code + '" error=' + errScore.toFixed(3));
+            voteBuffer = [];
           } else {
             voteBuffer = [];
           }
@@ -602,7 +628,10 @@ function scanFrames() {
 
     if (!sessionActive || scanFramesGeneration !== myGeneration) return;
     // Adaptive rate: slow down after 30s idle to save CPU, snap back on activity
-    const rate = idleTickCount > IDLE_THRESHOLD ? 200 : 80;
+    const wasIdle = idleTickCount > IDLE_THRESHOLD;
+    const rate = wasIdle ? 200 : 80;
+    // Log transition moments only (not every tick)
+    if (idleTickCount === IDLE_THRESHOLD + 1) logVerbose('Tick rate slowed to 200ms (idle — no scan in 30s)');
     setTimeout(tick, rate);
   }
   tick();
@@ -611,7 +640,10 @@ function scanFrames() {
 function submitManual() {
   const input = document.getElementById('manual-name');
   const raw = input.value.trim();
-  if (!raw) return;
+  if (!raw) {
+    logVerbose('Manual entry attempted with empty field');
+    return;
+  }
   const name = toProperCase(raw) + ' (Manually Entered)';
   input.value = '';
   input.blur();
@@ -631,10 +663,17 @@ function submitManual() {
 
 function handleScan(value) {
   const now = Date.now();
-  if (now - lastScanTime < 2000) return;
-  if (lastScanned[value] && (now - lastScanned[value]) < cfg.cooldown) return;
+  if (now - lastScanTime < 2000) {
+    logVerbose('Scan blocked by global cooldown: "' + value + '" (' + (2000 - (now - lastScanTime)) + 'ms remaining)');
+    return;
+  }
+  if (lastScanned[value] && (now - lastScanned[value]) < cfg.cooldown) {
+    logVerbose('Scan blocked by per-card cooldown: "' + value + '" (' + Math.round((cfg.cooldown - (now - lastScanned[value]))/1000) + 's remaining)');
+    return;
+  }
   lastScanTime = now;
   lastScanned[value] = now;
+  sessionScanCount++;
   incrementDailyCount();
   updateDailyCountBadge();
   beep();
@@ -665,10 +704,10 @@ function saveQueue(q) {
 }
 function addToQueue(entry) {
   const q = loadQueue();
-  // Avoid duplicates in case of rapid retries
   if (!q.find(e => e.id === entry.id)) {
     q.push({ id: entry.id, name: entry.name, time: entry.time });
     saveQueue(q);
+    logVerbose('Added to offline queue: "' + entry.name + '" — queue size now ' + (q.length + 1));
   }
   updateQueueBadge();
 }
@@ -739,6 +778,7 @@ async function flushQueue() {
   }
   if (successCount > 0) {
     updateQueueBadge();
+    logError('INFO', 'Offline queue flushed — ' + successCount + ' scan' + (successCount > 1 ? 's' : '') + ' synced to sheet');
     showToast(successCount + ' queued scan' + (successCount > 1 ? 's' : '') + ' synced ✓');
     setStatus('Synced ' + successCount + ' offline scan' + (successCount > 1 ? 's' : ''), 'ok');
   }
@@ -758,6 +798,11 @@ function saveErrorQueue(q) {
     // Keep last 50 errors max to avoid filling localStorage
     localStorage.setItem(ERROR_LOG_KEY, JSON.stringify(q.slice(-50)));
   } catch(e) {}
+}
+
+function logVerbose(message) {
+  if (!VERBOSE) return;
+  logError('DEBUG', message);
 }
 
 function logError(type, message) {
@@ -807,10 +852,12 @@ async function flushErrorQueue() {
 
 // Listen for connectivity changes
 window.addEventListener('online', () => {
+  logError('INFO', 'Network: back online — flushing queues (attendance: ' + loadQueue().length + ', errors: ' + loadErrorQueue().length + ')');
   showToast('Back online — syncing...');
   setTimeout(() => { flushQueue(); flushErrorQueue(); }, 1000);
 });
 window.addEventListener('offline', () => {
+  logError('WARN', 'Network: went offline during ' + (sessionActive ? 'active session' : 'idle'));
   setStatus('Offline — scans will be saved and synced automatically', 'warn');
 });
 
@@ -862,6 +909,24 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
+logVerbose('App loaded — v2.8, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
+logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
+
+window.addEventListener('beforeunload', () => {
+  logError('INFO', 'App unloaded/closed');
+});
+
+// Page visibility — detect screen lock/unlock
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    logVerbose('Page hidden (screen locked or app backgrounded)');
+  } else {
+    logVerbose('Page visible again (screen unlocked or app foregrounded)');
+    // Good time to flush queues
+    if (navigator.onLine) { flushQueue(); flushErrorQueue(); }
+  }
+});
 
 // Global JS error catch — logs unexpected errors to admin sheet
 window.addEventListener('error', function(e) {
@@ -890,11 +955,14 @@ if ('serviceWorker' in navigator) {
     reg.update();
     setInterval(() => reg.update(), 60000);
 
+    logVerbose('Service worker registered — checking for updates');
     reg.addEventListener('updatefound', () => {
+      logVerbose('Service worker update found — downloading');
       const newWorker = reg.installing;
       newWorker.addEventListener('statechange', () => {
+        logVerbose('Service worker state: ' + newWorker.state);
         if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-          // New version is ready — reload if safe, otherwise wait
+          logError('INFO', 'App update ready — will apply ' + (sessionActive ? 'after session ends' : 'now'));
           applyUpdate();
         }
       });
