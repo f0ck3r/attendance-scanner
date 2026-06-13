@@ -134,6 +134,7 @@
           Widened crop zone to 70% of frame. Quagga input size increased
           to 1280 to match full resolution.
   v2.4 — Manual entry moved to prominent full-width bar at top of app.
+  v2.5 — Suppressed false-alarm SW load failure errors from error log.
 
 ================================================================================
 -->
@@ -353,7 +354,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.4</span>
+  <span class="version-tag" id="version-tag">v2.5</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -839,7 +840,10 @@ window.addEventListener('error', function(e) {
   logError('ERROR', 'JS error: ' + e.message + ' (' + (e.filename || '') + ':' + (e.lineno || '') + ')');
 });
 window.addEventListener('unhandledrejection', function(e) {
-  logError('ERROR', 'Unhandled promise: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+  const msg = e.reason && e.reason.message ? e.reason.message : String(e.reason);
+  // Ignore service worker load failures — expected on flaky connections, harmless
+  if (msg.includes('sw.js') || msg.includes('serviceWorker') || msg.includes('Service Worker')) return;
+  logError('ERROR', 'Unhandled promise: ' + msg);
 });
 
 // Flush any error queue left from previous session
