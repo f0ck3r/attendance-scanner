@@ -148,6 +148,9 @@
   v2.9 — Fixed InvalidStateError: canvas operations now wrapped in try/catch
           with video validity check (paused/ended guard). InvalidStateError
           silently swallowed; other frame errors logged.
+  v3.0 — Purely numeric barcode results rejected before vote buffer
+          (e.g. "193037475533523833"). Real member names always contain
+          letters. Numeric rejects logged as DEBUG.
 
 ================================================================================
 -->
@@ -367,7 +370,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v2.9</span>
+  <span class="version-tag" id="version-tag">v3.0</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -607,7 +610,9 @@ function scanFrames() {
             result.codeResult.decodedCodes &&
             result.codeResult.decodedCodes.length > 0 &&
             result.codeResult.decodedCodes.slice(-1)[0].error < 0.25;
-          if (code && validChecksum) {
+          // Reject purely numeric results — member names always contain letters
+          const validFormat = code && !/^\d+$/.test(code.trim());
+          if (code && validChecksum && validFormat) {
             voteBuffer.push(code);
             if (voteBuffer.length > VOTE_THRESHOLD) voteBuffer.shift();
             if (voteBuffer.length === VOTE_THRESHOLD && voteBuffer.every(v => v === code)) {
@@ -618,8 +623,10 @@ function scanFrames() {
             } else {
               logVerbose('Barcode candidate: "' + code + '" (' + voteBuffer.length + '/' + VOTE_THRESHOLD + ' votes)');
             }
+          } else if (code && validChecksum && !validFormat) {
+            logVerbose('Barcode rejected (purely numeric): "' + code + '" — garbage read');
+            voteBuffer = [];
           } else if (code) {
-            // Code found but failed checksum
             const errScore = result.codeResult.decodedCodes.slice(-1)[0].error;
             logVerbose('Barcode rejected (checksum fail): "' + code + '" error=' + errScore.toFixed(3));
             voteBuffer = [];
@@ -919,7 +926,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v2.8, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.0, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
