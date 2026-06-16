@@ -151,6 +151,9 @@
   v3.0 — Purely numeric barcode results rejected before vote buffer
           (e.g. "193037475533523833"). Real member names always contain
           letters. Numeric rejects logged as DEBUG.
+  v3.1 — Session duplicate guard: same name blocked for 5 minutes within
+          a session. Amber status message shown. Manual entries exempt.
+          Double-space fix in manual entry field.
 
 ================================================================================
 -->
@@ -370,7 +373,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.0</span>
+  <span class="version-tag" id="version-tag">v3.1</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -382,14 +385,16 @@ let sessionActive = false;
 let sessionTimeout = null;
 let stream = null;
 let scanLog = [];
-let lastScanned = {};
-let lastScanTime = 0;
+let lastScanned = {};       // per-card 5-second cooldown timestamps
+let lastScanTime = 0;       // global 2-second cooldown timestamp
+let sessionCheckedIn = {};  // session duplicate guard: name → timestamp (5-min window)
 let voteBuffer = [];        // consecutive matching reads required before accepting
 const VOTE_THRESHOLD = 2;
 let loopRestartInterval = null; // periodic scan loop restart for memory management
 let idleTickCount = 0;          // frames since last successful scan (for adaptive rate)
 const IDLE_THRESHOLD = 375;     // ~30 seconds at 80ms before slowing to idle rate
 const SCAN_LOG_MAX = 50;        // max entries kept in memory/DOM
+const SESSION_DUPLICATE_MS = 5 * 60 * 1000; // 5-minute session duplicate guard
 const VERBOSE = true;           // verbose logging — set false once stable
 let sessionStartTime = null;    // for session duration metric
 let sessionScanCount = 0;       // scans this session for metrics   // 2 consecutive matching frames required (checksum handles accuracy)
@@ -476,6 +481,7 @@ function beep() {
 function startSession() {
   lastScanned = {};
   lastScanTime = 0;
+  sessionCheckedIn = {};
   unlockAudio();
 
   navigator.mediaDevices.getUserMedia({
@@ -661,7 +667,7 @@ function submitManual() {
     logVerbose('Manual entry attempted with empty field');
     return;
   }
-  const name = toProperCase(raw) + ' (Manually Entered)';
+  const name = toProperCase(raw.replace(/\s+/g, ' ')) + ' (Manually Entered)';  // collapse extra spaces
   input.value = '';
   input.blur();
   // Reuse handleScan logic but bypass cooldown/vote — manual entry is always intentional
@@ -688,8 +694,22 @@ function handleScan(value) {
     logVerbose('Scan blocked by per-card cooldown: "' + value + '" (' + Math.round((cfg.cooldown - (now - lastScanned[value]))/1000) + 's remaining)');
     return;
   }
+  // Session duplicate guard — 5-minute window per name
+  const normalised = value.trim().toUpperCase();
+  if (sessionCheckedIn[normalised] && (now - sessionCheckedIn[normalised]) < SESSION_DUPLICATE_MS) {
+    const minsLeft = Math.ceil((SESSION_DUPLICATE_MS - (now - sessionCheckedIn[normalised])) / 60000);
+    logVerbose('Session duplicate blocked: "' + value + '" (' + minsLeft + 'min remaining)');
+    setStatus('Already successfully signed in for this activity: You cannot scan your card again for 5 minutes', 'warn');
+    // Brief flash to acknowledge the scan attempt visually
+    const flash = document.getElementById('flash');
+    flash.style.background = 'rgba(217,119,6,0.3)';
+    flash.classList.add('active');
+    setTimeout(() => { flash.classList.remove('active'); flash.style.background = ''; }, 300);
+    return;
+  }
   lastScanTime = now;
   lastScanned[value] = now;
+  sessionCheckedIn[normalised] = now;
   sessionScanCount++;
   incrementDailyCount();
   updateDailyCountBadge();
@@ -926,7 +946,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.0, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.1, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
