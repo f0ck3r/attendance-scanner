@@ -159,6 +159,8 @@
           5-second cooldown removed (redundant). Session duplicate guard
           now fully silent — no UI shown, just logged. Seniors hear beep
           and card is silently ignored if held longer.
+  v3.3 — Manual entry 5-second debounce: same name can't be submitted twice
+          within 5 seconds. Toast shown if double-tap detected.
 
 ================================================================================
 -->
@@ -378,7 +380,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.2</span>
+  <span class="version-tag" id="version-tag">v3.3</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -665,6 +667,9 @@ function scanFrames() {
   tick();
 }
 
+let lastManualTime = 0;       // debounce for manual entry button
+let lastManualName = '';      // last submitted name for duplicate check
+
 function submitManual() {
   const input = document.getElementById('manual-name');
   const raw = input.value.trim();
@@ -672,17 +677,28 @@ function submitManual() {
     logVerbose('Manual entry attempted with empty field');
     return;
   }
-  const name = toProperCase(raw.replace(/\s+/g, ' ')) + ' (Manually Entered)';  // collapse extra spaces
+  const now = Date.now();
+  const name = toProperCase(raw.replace(/\s+/g, ' ')) + ' (Manually Entered)';
+  const normalisedName = raw.replace(/\s+/g, ' ').trim().toUpperCase();
+
+  // 5-second debounce — prevent double-tap submitting the same name twice
+  if (now - lastManualTime < 5000 && normalisedName === lastManualName) {
+    logVerbose('Manual entry debounced (double-tap): "' + name + '"');
+    showToast('Already just added — please wait a moment');
+    return;
+  }
+  lastManualTime = now;
+  lastManualName = normalisedName;
+
   input.value = '';
   input.blur();
-  // Reuse handleScan logic but bypass cooldown/vote — manual entry is always intentional
-  const now = Date.now();
   const entry = { id: now, name: name, time: new Date(), status: 'pending' };
   incrementDailyCount();
   updateDailyCountBadge();
   beep();
   if (navigator.vibrate) navigator.vibrate(80);
   scanLog.unshift(entry);
+  if (scanLog.length > SCAN_LOG_MAX) scanLog = scanLog.slice(0, SCAN_LOG_MAX);
   renderLog();
   postToSheet(entry);
   logError('INFO', 'Manual entry: ' + name);
@@ -941,7 +957,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.2, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.3, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
