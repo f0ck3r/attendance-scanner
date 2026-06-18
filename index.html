@@ -161,6 +161,11 @@
           and card is silently ignored if held longer.
   v3.3 — Manual entry 5-second debounce: same name can't be submitted twice
           within 5 seconds. Toast shown if double-tap detected.
+  v3.4 — Fixed duplicate sheet entries: isFlushing/isFlushingErrors guards
+          prevent concurrent flushQueue calls (online + visibilitychange
+          firing simultaneously). handleScan now claims sessionCheckedIn
+          slot atomically at top to prevent race condition. Queue dedup
+          by name+timewindow as final safety net.
 
 ================================================================================
 -->
@@ -380,7 +385,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.3</span>
+  <span class="version-tag" id="version-tag">v3.4</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -669,6 +674,8 @@ function scanFrames() {
 
 let lastManualTime = 0;       // debounce for manual entry button
 let lastManualName = '';      // last submitted name for duplicate check
+let isFlushing = false;       // prevents concurrent flushQueue calls
+let isFlushingErrors = false; // prevents concurrent flushErrorQueue calls
 
 function submitManual() {
   const input = document.getElementById('manual-name');
@@ -707,20 +714,28 @@ function submitManual() {
 
 function handleScan(value) {
   const now = Date.now();
+  const normalised = value.trim().toUpperCase();
+
+  // ── Claim session slot FIRST (atomic) ──
+  // Setting sessionCheckedIn at the very top prevents race conditions
+  // where two near-simultaneous Quagga callbacks both pass the guard
+  // before either has a chance to set the value.
+  const lastCheckedIn = sessionCheckedIn[normalised];
+  if (lastCheckedIn && (now - lastCheckedIn) < SESSION_DUPLICATE_MS) {
+    const minsLeft = Math.ceil((SESSION_DUPLICATE_MS - (now - lastCheckedIn)) / 60000);
+    logVerbose('Session duplicate silently ignored: "' + value + '" (' + minsLeft + 'min remaining)');
+    return;
+  }
+  // Claim immediately — any concurrent call will now be blocked
+  sessionCheckedIn[normalised] = now;
+
+  // Global 500ms cooldown (prevents same scan firing twice in one moment)
   if (now - lastScanTime < 500) {
     logVerbose('Scan blocked by global cooldown: "' + value + '" (' + (500 - (now - lastScanTime)) + 'ms remaining)');
     return;
   }
-  // Session duplicate guard — 5-minute window per name, silently ignored
-  const normalised = value.trim().toUpperCase();
-  if (sessionCheckedIn[normalised] && (now - sessionCheckedIn[normalised]) < SESSION_DUPLICATE_MS) {
-    const minsLeft = Math.ceil((SESSION_DUPLICATE_MS - (now - sessionCheckedIn[normalised])) / 60000);
-    logVerbose('Session duplicate silently ignored: "' + value + '" (' + minsLeft + 'min remaining)');
-    return;
-  }
   lastScanTime = now;
   lastScanned[value] = now;
-  sessionCheckedIn[normalised] = now;
   sessionScanCount++;
   incrementDailyCount();
   updateDailyCountBadge();
@@ -752,10 +767,18 @@ function saveQueue(q) {
 }
 function addToQueue(entry) {
   const q = loadQueue();
-  if (!q.find(e => e.id === entry.id)) {
+  // Deduplicate by ID (exact match) AND by name+timewindow (race condition safety net)
+  // The 3-second window catches any concurrent calls that slipped through handleScan
+  const isDuplicate = q.find(e =>
+    e.id === entry.id ||
+    (e.name === entry.name && Math.abs(new Date(e.time) - new Date(entry.time)) < 3000)
+  );
+  if (!isDuplicate) {
     q.push({ id: entry.id, name: entry.name, time: entry.time });
     saveQueue(q);
-    logVerbose('Added to offline queue: "' + entry.name + '" — queue size now ' + (q.length + 1));
+    logVerbose('Added to offline queue: "' + entry.name + '" — queue size now ' + q.length);
+  } else {
+    logVerbose('Queue deduplicated (race condition caught): "' + entry.name + '"');
   }
   updateQueueBadge();
 }
@@ -808,10 +831,13 @@ async function postToSheet(entry) {
   }
 }
 
-// Retry all queued entries
+// Retry all queued entries — isFlushing prevents concurrent calls
+// (online + visibilitychange can fire simultaneously causing double-posts)
 async function flushQueue() {
+  if (isFlushing) { logVerbose('flushQueue already running — skipped concurrent call'); return; }
+  isFlushing = true;
   const q = loadQueue();
-  if (q.length === 0) return;
+  if (q.length === 0) { isFlushing = false; return; }
   let successCount = 0;
   for (const item of q) {
     try {
@@ -824,6 +850,7 @@ async function flushQueue() {
       break; // Still offline — stop trying, wait for next online event
     }
   }
+  isFlushing = false;
   if (successCount > 0) {
     updateQueueBadge();
     logError('INFO', 'Offline queue flushed — ' + successCount + ' scan' + (successCount > 1 ? 's' : '') + ' synced to sheet');
@@ -887,8 +914,10 @@ async function postErrorEntry(entry) {
 }
 
 async function flushErrorQueue() {
+  if (isFlushingErrors) return;
+  isFlushingErrors = true;
   const q = loadErrorQueue();
-  if (q.length === 0) return;
+  if (q.length === 0) { isFlushingErrors = false; return; }
   for (const entry of q) {
     try {
       await postErrorEntry(entry);
@@ -896,6 +925,7 @@ async function flushErrorQueue() {
       break; // Still offline
     }
   }
+  isFlushingErrors = false;
 }
 
 // Listen for connectivity changes
@@ -957,7 +987,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.3, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.4, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
