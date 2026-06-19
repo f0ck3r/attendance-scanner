@@ -166,6 +166,15 @@
           firing simultaneously). handleScan now claims sessionCheckedIn
           slot atomically at top to prevent race condition. Queue dedup
           by name+timewindow as final safety net.
+  v3.5 — CRITICAL FIX: service worker was intercepting ALL GET requests
+          including cross-origin Google Apps Script calls, double-fetching
+          every scan. On weak wifi this exhausted the browser's per-domain
+          connection pool (~6 concurrent), causing the app to appear frozen
+          after a few scans (fixed by Airplane Mode forcing fast failure).
+          SW now only intercepts same-origin requests. Added 5-second fetch
+          timeout (AbortController) on all sheet posts so a hung connection
+          fails fast and falls into the offline queue instead of blocking
+          the connection pool indefinitely. Added fetch timing diagnostics.
 
 ================================================================================
 -->
@@ -385,7 +394,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.4</span>
+  <span class="version-tag" id="version-tag">v3.5</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -806,6 +815,29 @@ function toProperCase(str) {
   return str.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Fetch with a hard timeout — prevents a single slow/hung connection from
+// occupying a browser connection slot indefinitely. On weak wifi, requests
+// can hang for 30+ seconds rather than failing fast; with only ~6 concurrent
+// connections allowed per domain (Safari), a few hung requests can block
+// all future scans from posting. 5 seconds is generous for a simple GET
+// but short enough to fail fast and fall back to the offline queue.
+async function fetchWithTimeout(url, options, timeoutMs) {
+  timeoutMs = timeoutMs || 5000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch(e) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') {
+      throw new Error('Request timed out after ' + timeoutMs + 'ms');
+    }
+    throw e;
+  }
+}
+
 async function postEntry(id, name, time) {
   const properName = toProperCase(name);
   const params = new URLSearchParams({
@@ -814,20 +846,24 @@ async function postEntry(id, name, time) {
     token: 'ao50club2025'
   });
   const url = cfg.attendanceUrl || cfg.errorUrl; // fallback to error URL if attendance not set yet
-  await fetch(url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+  await fetchWithTimeout(url + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
 }
 
 async function postToSheet(entry) {
+  const fetchStart = Date.now();
   try {
     await postEntry(entry.id, entry.name, entry.time);
+    const elapsed = Date.now() - fetchStart;
+    logVerbose('Sheet post succeeded: "' + entry.name + '" in ' + elapsed + 'ms');
     updateEntryStatus(entry.id, 'done');
     setStatus('Recorded: ' + entry.name, 'ok');
   } catch(e) {
     // Network failed — queue it for later
+    const elapsed = Date.now() - fetchStart;
     updateEntryStatus(entry.id, 'queued');
     addToQueue(entry);
     setStatus('Offline — scan saved, will sync when connected', 'warn');
-    logError('WARN', 'Attendance post failed for ' + entry.name + ' — queued for retry');
+    logError('WARN', 'Attendance post failed for ' + entry.name + ' after ' + elapsed + 'ms (' + e.message + ') — queued for retry');
   }
 }
 
@@ -904,7 +940,7 @@ async function postErrorEntry(entry) {
       device: 'iPad',
       token: 'ao50club2025'
     });
-    await fetch(cfg.errorUrl + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
+    await fetchWithTimeout(cfg.errorUrl + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
     // Remove from queue on success
     const q = loadErrorQueue().filter(e => e.id !== entry.id);
     saveErrorQueue(q);
@@ -987,7 +1023,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.4, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.5, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 

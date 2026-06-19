@@ -1,9 +1,9 @@
 // Airdrie Over 50 Club — Attendance Scanner
-// Service Worker v3.4
+// Service Worker v3.5
 // Bump CACHE_VERSION below whenever a new version of index.html is deployed.
 // The old cache will be automatically cleared and the fresh files downloaded.
 
-const CACHE_VERSION = 'ao50-v3.4';
+const CACHE_VERSION = 'ao50-v3.5';
 const CACHED_URLS = [
   '/',
   '/index.html'
@@ -38,9 +38,20 @@ self.addEventListener('activate', event => {
 });
 
 // Fetch: serve from cache, fall back to network, update cache in background
+// CRITICAL FIX (v3.5): only intercept same-origin requests. Previously this
+// handler intercepted ALL GET requests including cross-origin calls to
+// Google Apps Script, causing every attendance post to be double-fetched.
+// On weak wifi this exhausted the browser's per-domain connection pool
+// (~6 concurrent on Safari), causing the app to "freeze" after a few scans
+// since new requests couldn't even start. Airplane Mode "fixed" it because
+// it forced all hung requests to fail immediately instead of hanging.
 self.addEventListener('fetch', event => {
-  // Only handle GET requests for our own origin
   if (event.request.method !== 'GET') return;
+
+  // Only intercept requests to our own origin — let everything else
+  // (Google Apps Script, CDN libraries, etc.) pass through untouched
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) return;
 
   event.respondWith(
     caches.match(event.request).then(cached => {
