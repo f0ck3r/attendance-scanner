@@ -175,6 +175,13 @@
           timeout (AbortController) on all sheet posts so a hung connection
           fails fast and falls into the offline queue instead of blocking
           the connection pool indefinitely. Added fetch timing diagnostics.
+  v3.6 — Fixed re-entrancy bug: tapping "Begin Scanning" while a session was
+          already active (e.g. repeated taps from perceived lag) silently
+          wiped the 5-minute session duplicate guard, allowing already-
+          scanned members to be recorded twice. startSession() now checks
+          sessionActive and ignores re-taps; flag is set synchronously
+          before the camera permission promise resolves to close the
+          double-tap timing window entirely.
 
 ================================================================================
 -->
@@ -394,7 +401,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.5</span>
+  <span class="version-tag" id="version-tag">v3.6</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -500,9 +507,19 @@ function beep() {
 
 // Session — uses native getUserMedia directly (works on iOS Safari)
 function startSession() {
+  // Guard against re-entrancy: if a session is already active, do nothing.
+  // Without this, repeated taps on "Begin Scanning" (e.g. due to perceived
+  // lag) would wipe sessionCheckedIn mid-session, defeating the 5-minute
+  // duplicate guard and allowing already-scanned members to scan again.
+  if (sessionActive) {
+    logVerbose('startSession ignored — session already active');
+    return;
+  }
   lastScanned = {};
   lastScanTime = 0;
   sessionCheckedIn = {};
+  sessionActive = true; // set immediately (synchronously) to close the double-tap window
+                         // before getUserMedia resolves; reverted to false below if it fails
   unlockAudio();
 
   navigator.mediaDevices.getUserMedia({
@@ -518,7 +535,6 @@ function startSession() {
     video.srcObject = stream;
     video.style.display = 'block';
     video.play().then(() => {
-      sessionActive = true;
       sessionStartTime = Date.now();
       sessionScanCount = 0;
       document.getElementById('idle-state').style.display = 'none';
@@ -544,6 +560,7 @@ function startSession() {
       }, 10 * 60 * 1000);
     });
   }).catch(function(err) {
+    sessionActive = false; // revert the eager lock since the camera never actually started
     const errMsg = 'Camera error: ' + (err.message || err);
     setStatus(errMsg, 'err');
     logError('ERROR', errMsg);
@@ -1023,7 +1040,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.5, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.6, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
