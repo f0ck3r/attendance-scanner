@@ -182,6 +182,16 @@
           sessionActive and ignores re-taps; flag is set synchronously
           before the camera permission promise resolves to close the
           double-tap timing window entirely.
+  v3.7 — More prominent success feedback: checkmark circle enlarged
+          (90px → 130px) and changed from blue to green (clearer "success"
+          signal, distinct from the blue brand theme used elsewhere),
+          shown for longer (900ms → 1.6s), flash duration increased
+          (150ms → 250ms, also green). Addresses staff observation that
+          members were lingering with their card under the scanner —
+          error log analysis showed 60% of scans had a lingering re-read
+          within the 5-min duplicate guard window, suggesting the prior
+          feedback wasn't registering clearly enough before they pulled
+          the card away.
 
 ================================================================================
 -->
@@ -238,13 +248,13 @@
   .scan-corner.br { bottom: 18%; right: 8%; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
   .scan-beam { position: absolute; left: 8%; right: 8%; height: 2px; background: linear-gradient(90deg, transparent, #60a5fa, transparent); top: 18%; animation: beam 2s ease-in-out infinite; box-shadow: 0 0 8px #60a5fa; }
   @keyframes beam { 0%,100%{top:20%;} 50%{top:78%;} }
-  .scan-flash { position: absolute; inset: 0; background: rgba(29,78,216,0.25); opacity: 0; pointer-events: none; transition: opacity 0.08s; }
+  .scan-flash { position: absolute; inset: 0; background: rgba(22,163,74,0.30); opacity: 0; pointer-events: none; transition: opacity 0.08s; }
   .scan-flash.active { opacity: 1; }
   .scan-success { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity 0.15s; }
   .scan-success.active { opacity: 1; }
-  .scan-success-circle { width: 90px; height: 90px; border-radius: 50%; background: rgba(29,78,216,0.92); display: flex; align-items: center; justify-content: center; transform: scale(0.7); transition: transform 0.2s cubic-bezier(0.175,0.885,0.32,1.275); }
+  .scan-success-circle { width: 130px; height: 130px; border-radius: 50%; background: rgba(22,163,74,0.95); display: flex; align-items: center; justify-content: center; transform: scale(0.7); transition: transform 0.2s cubic-bezier(0.175,0.885,0.32,1.275); }
   .scan-success.active .scan-success-circle { transform: scale(1); }
-  .scan-success-circle svg { width: 48px; height: 48px; fill: none; stroke: white; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .scan-success-circle svg { width: 68px; height: 68px; fill: none; stroke: white; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
   .camera-footer { padding: 12px 16px; display: flex; gap: 8px; align-items: center; }
   .btn-primary { flex: 1; padding: 11px 16px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px; -webkit-tap-highlight-color: transparent; transition: background 0.15s; }
   .btn-primary:active { background: var(--green-dark); }
@@ -401,7 +411,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.6</span>
+  <span class="version-tag" id="version-tag">v3.7</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -770,10 +780,10 @@ function handleScan(value) {
   if (navigator.vibrate) navigator.vibrate(80);
   const flash = document.getElementById('flash');
   flash.classList.add('active');
-  setTimeout(() => flash.classList.remove('active'), 150);
+  setTimeout(() => flash.classList.remove('active'), 250);
   const success = document.getElementById('scan-success');
   success.classList.add('active');
-  setTimeout(() => success.classList.remove('active'), 900);
+  setTimeout(() => success.classList.remove('active'), 1600);
   const entry = { id: now, name: value, time: new Date(), status: 'pending' };
   scanLog.unshift(entry);
   if (scanLog.length > SCAN_LOG_MAX) scanLog = scanLog.slice(0, SCAN_LOG_MAX); // cap memory
@@ -1040,7 +1050,7 @@ function clearLog() {
 loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.6, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.7, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
