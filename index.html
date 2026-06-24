@@ -39,7 +39,7 @@
   SCAN RELIABILITY FEATURES:
   - Greyscale + contrast boost applied to each frame before decoding
   - Quagga2 checksum validation: error score must be < 0.25
-  - 3-consecutive-frame vote confirmation before a scan is accepted
+  - 2-consecutive-frame vote confirmation before a scan is accepted
   - 500ms global cooldown (prevents double-fire in same moment)
   - 5-minute session duplicate guard (same name silently ignored, no UI shown)
 
@@ -66,14 +66,15 @@
       }
 
   HARDCODED SETTINGS (change here in code, not in the app UI):
-  - Apps Script URL: stored in cfg.url in the JS below — keep this out of
-    public documentation. Obtain from the Google Apps Script deployment page.
+  - Apps Script URLs: stored in cfg.attendanceUrl / cfg.errorUrl in the JS
+    below — keep these out of public documentation. Obtain from the Google
+    Apps Script deployment page.
   - Global cooldown: 500ms (prevents same scan firing twice in one moment)
   - Per-card cooldown: removed (session duplicate guard handles this)
   - Session duplicate guard: 5 minutes (same name silently ignored for session)
   - Session auto-stop timeout: 30 minutes
   - Timezone: America/Edmonton (Mountain Time)
-  - Vote threshold (consecutive matching frames required): 3
+  - Vote threshold (consecutive matching frames required): 2
   - Checksum error threshold: 0.25
 
   ASSETS EMBEDDED AS BASE64:
@@ -192,6 +193,19 @@
           within the 5-min duplicate guard window, suggesting the prior
           feedback wasn't registering clearly enough before they pulled
           the card away.
+  v3.8 — Bug fix (silent attendance loss): handleScan() claimed the 5-minute
+          session-duplicate slot BEFORE the 500ms global cooldown check. A
+          *different* member confirmed within 500ms of a prior scan would
+          claim a slot, then return on the cooldown — leaving them marked
+          "checked in" (and silently blocked for 5 min) but never recorded or
+          beeped. Cooldown is now checked first; the slot is claimed only when
+          the scan is actually recorded. Uncommon trigger (two members
+          confirmed within 500ms) but a silent miss, not a visible duplicate.
+          Cleanup (no behaviour change): removed orphaned settings-modal code
+          (functions + CSS, no UI present since long ago), the write-only
+          lastScanned map (per-card cooldown removed in v3.2), the unused
+          per-session scanCount, the unused cfg.cooldown/loadCfg/saveCfg, and
+          corrected stale "3-frame vote" comments (it has been 2 since v1.6).
 
 ================================================================================
 -->
@@ -279,19 +293,6 @@
   .log-time { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
   .status-icon { flex-shrink: 0; width: 22px; height: 22px; }
   .status-icon svg { width: 22px; height: 22px; }
-  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; align-items: flex-end; justify-content: center; }
-  .modal-backdrop.open { display: flex; }
-  .modal { background: var(--surface); border-radius: var(--radius) var(--radius) 0 0; padding: 20px; width: 100%; max-width: 560px; max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  .modal-handle { width: 40px; height: 4px; background: var(--border-strong); border-radius: 2px; margin: 0 auto 18px; }
-  .modal-title { font-size: 17px; font-weight: 600; margin-bottom: 18px; }
-  .field { margin-bottom: 14px; }
-  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; letter-spacing: 0.04em; text-transform: uppercase; }
-  .field input, .field select { width: 100%; padding: 10px 12px; font-size: 15px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); -webkit-appearance: none; appearance: none; }
-  .field input:focus, .field select:focus { outline: none; border-color: var(--green); }
-  .field .hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; line-height: 1.5; }
-  .modal-actions { display: flex; gap: 8px; margin-top: 20px; }
-  .btn-save { flex: 1; padding: 13px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 15px; font-weight: 600; cursor: pointer; }
-  .btn-cancel { padding: 13px 18px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 15px; cursor: pointer; }
   /* Manual entry bar — full width prominent strip at top */
   .manual-bar { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 2px solid var(--green); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(29,78,216,0.10); }
   .manual-bar-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--green); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
@@ -411,7 +412,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.7</span>
+  <span class="version-tag" id="version-tag">v3.8</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -423,8 +424,7 @@ let sessionActive = false;
 let sessionTimeout = null;
 let stream = null;
 let scanLog = [];
-let lastScanned = {};       // per-card 5-second cooldown timestamps
-let lastScanTime = 0;       // global 2-second cooldown timestamp
+let lastScanTime = 0;       // global 500ms cooldown timestamp
 let sessionCheckedIn = {};  // session duplicate guard: name → timestamp (5-min window)
 let voteBuffer = [];        // consecutive matching reads required before accepting
 const VOTE_THRESHOLD = 2;
@@ -466,29 +466,13 @@ function updateDailyCountBadge() {
 }
 // cfg.errorUrl = current sheet (admin/error log)
 // cfg.attendanceUrl = production attendance sheet (set in v2.0)
-let cfg = {
+// Sheet endpoints are hardcoded (no in-app settings UI). The duplicate guard
+// and cooldown timings are constants in the scan logic, not configurable here.
+const cfg = {
   errorUrl: 'https://script.google.com/macros/s/AKfycbxmLd-fgKOZ9Iub2efrOO4ELUlLkTVI5g1nfCG219qwwr9kwQ4FCEimPdLXWCs3CYAbug/exec',
-  attendanceUrl: 'https://script.google.com/macros/s/AKfycbxIWPOiEVVqUxrRL54aK3XjkP66Bh9Ikl4RxoAtSDwLaBdhdztLX8_BadrThOryLCI-qQ/exec',
-  cooldown: 5000
+  attendanceUrl: 'https://script.google.com/macros/s/AKfycbxIWPOiEVVqUxrRL54aK3XjkP66Bh9Ikl4RxoAtSDwLaBdhdztLX8_BadrThOryLCI-qQ/exec'
 };
 
-function loadCfg() {
-  try { const s = localStorage.getItem('ao50_cfg'); if (s) cfg = {...cfg, ...JSON.parse(s)}; } catch(e) {}
-}
-function saveCfg() {
-  try { localStorage.setItem('ao50_cfg', JSON.stringify(cfg)); } catch(e) {}
-}
-function openSettings() {
-  document.getElementById('cfg-url').value = cfg.url || '';
-  document.getElementById('cfg-cooldown').value = cfg.cooldown || 5000;
-  document.getElementById('modal').classList.add('open');
-}
-function closeSettings() { document.getElementById('modal').classList.remove('open'); }
-function handleBackdropClick(e) { if (e.target === document.getElementById('modal')) closeSettings(); }
-function saveSettings() {
-  cfg.cooldown = parseInt(document.getElementById('cfg-cooldown').value);
-  saveCfg(); closeSettings(); showToast('Settings saved');
-}
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -525,7 +509,6 @@ function startSession() {
     logVerbose('startSession ignored — session already active');
     return;
   }
-  lastScanned = {};
   lastScanTime = 0;
   sessionCheckedIn = {};
   sessionActive = true; // set immediately (synchronously) to close the double-tap window
@@ -592,7 +575,6 @@ function stopSession() {
   document.getElementById('scan-overlay').style.display = 'none';
   document.getElementById('btn-start').style.display = 'flex';
   document.getElementById('btn-stop').style.display = 'none';
-  const scanCount = scanLog.filter(e => e.time && new Date(e.time).toDateString() === new Date().toDateString()).length;
   const durationMs = sessionStartTime ? Date.now() - sessionStartTime : 0;
   const durationMin = (durationMs / 60000).toFixed(1);
   const scansPerMin = durationMs > 0 ? (sessionScanCount / (durationMs / 60000)).toFixed(1) : '0';
@@ -752,26 +734,31 @@ function handleScan(value) {
   const now = Date.now();
   const normalised = value.trim().toUpperCase();
 
-  // ── Claim session slot FIRST (atomic) ──
-  // Setting sessionCheckedIn at the very top prevents race conditions
-  // where two near-simultaneous Quagga callbacks both pass the guard
-  // before either has a chance to set the value.
+  // ── Session duplicate guard ──
+  // Block the same member for SESSION_DUPLICATE_MS (5 min) within a session.
   const lastCheckedIn = sessionCheckedIn[normalised];
   if (lastCheckedIn && (now - lastCheckedIn) < SESSION_DUPLICATE_MS) {
     const minsLeft = Math.ceil((SESSION_DUPLICATE_MS - (now - lastCheckedIn)) / 60000);
     logVerbose('Session duplicate silently ignored: "' + value + '" (' + minsLeft + 'min remaining)');
     return;
   }
-  // Claim immediately — any concurrent call will now be blocked
-  sessionCheckedIn[normalised] = now;
 
-  // Global 500ms cooldown (prevents same scan firing twice in one moment)
+  // Global 500ms cooldown (prevents same scan firing twice in one moment).
+  // IMPORTANT: this is checked BEFORE claiming the session slot below. If the
+  // slot were claimed first, a *different* member confirmed within 500ms of
+  // the previous scan would claim a slot here, then return on the cooldown —
+  // leaving them marked "checked in" (and silently blocked for the full 5-min
+  // window) without ever being recorded or beeped. Claiming only on success
+  // avoids dropping that second member. (handleScan runs synchronously with no
+  // await, so decode callbacks can't interleave — claiming here is still safe
+  // against the same name double-firing, which the cooldown also blocks.)
   if (now - lastScanTime < 500) {
     logVerbose('Scan blocked by global cooldown: "' + value + '" (' + (500 - (now - lastScanTime)) + 'ms remaining)');
     return;
   }
   lastScanTime = now;
-  lastScanned[value] = now;
+  // Claim the session slot now that the scan is actually being recorded.
+  sessionCheckedIn[normalised] = now;
   sessionScanCount++;
   incrementDailyCount();
   updateDailyCountBadge();
@@ -1047,10 +1034,9 @@ function clearLog() {
   scanLog = []; renderLog();
 }
 
-loadCfg();
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.7, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.8, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
