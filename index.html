@@ -206,6 +206,19 @@
           lastScanned map (per-card cooldown removed in v3.2), the unused
           per-session scanCount, the unused cfg.cooldown/loadCfg/saveCfg, and
           corrected stale "3-frame vote" comments (it has been 2 since v1.6).
+  v3.9 — Service worker now also caches the pinned Quagga2 CDN script (in
+          addition to the app's own files) — it's version-pinned and
+          static, so caching it indefinitely is safe. Goal: when iOS
+          evicts/reloads the backgrounded web view after the iPad sleeps
+          between activities (confirmed via error log analysis: "App
+          loaded" events firing seconds before each new scanning session
+          on 2026-06-23), the fresh reload can serve the library from
+          cache instead of re-fetching it from the network, cutting the
+          multi-second delay staff reported on the first card after a
+          break. Added crossorigin="anonymous" to the Quagga <script> tag
+          so the service worker can read a real (non-opaque) response and
+          confirm it actually cached successfully, rather than silently
+          no-op'ing on every reload.
 
 ================================================================================
 -->
@@ -412,13 +425,13 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.8</span>
+  <span class="version-tag" id="version-tag">v3.9</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
 <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js" crossorigin="anonymous"></script>
 <script>
 let sessionActive = false;
 let sessionTimeout = null;
@@ -1036,7 +1049,7 @@ function clearLog() {
 
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.8, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.9, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
