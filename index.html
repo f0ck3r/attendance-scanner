@@ -219,6 +219,11 @@
           so the service worker can read a real (non-opaque) response and
           confirm it actually cached successfully, rather than silently
           no-op'ing on every reload.
+  v3.10 — Removed the hardcoded device: 'iPad' field from error log posts.
+          It was a static literal, never actually derived from the real
+          device, so it was always wrong for any non-iPad testing and added
+          no real information. Apps Script error log endpoint updated to
+          match (writes 3 columns now instead of 4).
 
 ================================================================================
 -->
@@ -425,7 +430,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.9</span>
+  <span class="version-tag" id="version-tag">v3.10</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -964,7 +969,6 @@ async function postErrorEntry(entry) {
       timestamp: entry.timestamp,
       type: entry.type,
       message: entry.message,
-      device: 'iPad',
       token: 'ao50club2025'
     });
     await fetchWithTimeout(cfg.errorUrl + '?' + params.toString(), { method: 'GET', mode: 'no-cors' });
@@ -1049,7 +1053,7 @@ function clearLog() {
 
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.9, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.10, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
