@@ -224,11 +224,11 @@
           device, so it was always wrong for any non-iPad testing and added
           no real information. Apps Script error log endpoint updated to
           match (writes 3 columns now instead of 4).
-  v3.11 — Removed manual name entry (the "Add to log" bar at the top of the
-          app, in place since v2.2). Scanning is now the only way to log
-          attendance. Removed submitManual() and its debounce state, the
-          manual-bar HTML/CSS, and the mobile-layout media query rule that
-          referenced it.
+  v3.11 — Removed manual name entry (the "Add to log" bar). Reverted in v3.12
+          after reconsideration — see below.
+  v3.12 — Restored manual name entry (reverts v3.11). Re-added submitManual(),
+          its debounce state, the manual-bar HTML/CSS, and the mobile-layout
+          media query rule, unchanged from the pre-v3.11 implementation.
 
 ================================================================================
 -->
@@ -267,7 +267,7 @@
   .icon-btn:active { background: var(--bg); }
   .icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   main { flex: 1; padding: 16px; max-width: 1100px; width: 100%; margin: 0 auto; }
-  @media (max-width: 700px) { .main-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) { .main-grid { grid-template-columns: 1fr; } .manual-bar { flex-wrap: wrap; } }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
   .card-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
   .card-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
@@ -316,6 +316,15 @@
   .log-time { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
   .status-icon { flex-shrink: 0; width: 22px; height: 22px; }
   .status-icon svg { width: 22px; height: 22px; }
+  /* Manual entry bar — full width prominent strip at top */
+  .manual-bar { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 2px solid var(--green); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(29,78,216,0.10); }
+  .manual-bar-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--green); white-space: nowrap; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
+  .manual-bar-label svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .manual-bar input { flex: 1; padding: 11px 14px; font-size: 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); -webkit-appearance: none; min-width: 0; }
+  .manual-bar input:focus { outline: none; border-color: var(--green); background: var(--surface); }
+  .btn-manual-submit { padding: 11px 18px; background: var(--green); color: white; border: none; border-radius: var(--radius-sm); font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; -webkit-tap-highlight-color: transparent; flex-shrink: 0; }
+  .btn-manual-submit:active { background: var(--green-dark); }
+  .btn-manual-submit svg { width: 16px; height: 16px; fill: none; stroke: white; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
   /* Two-column grid for camera + log */
   .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
   .clear-btn:active { background: var(--bg); }
@@ -346,6 +355,21 @@
   </header>
 
   <main>
+    <!-- Manual entry bar — full width, prominent, always visible -->
+    <div class="manual-bar">
+      <div class="manual-bar-label">
+        <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Manual entry
+      </div>
+      <input type="text" id="manual-name" placeholder="Type member name here…"
+        autocorrect="off" autocapitalize="words" spellcheck="false"
+        onkeydown="if(event.key==='Enter') submitManual()" />
+      <button class="btn-manual-submit" onclick="submitManual()">
+        <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        Add to log
+      </button>
+    </div>
+
     <div class="main-grid">
     <div class="card">
       <div class="card-header">
@@ -411,7 +435,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.11</span>
+  <span class="version-tag" id="version-tag">v3.12</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -689,8 +713,45 @@ function scanFrames() {
   tick();
 }
 
+let lastManualTime = 0;       // debounce for manual entry button
+let lastManualName = '';      // last submitted name for duplicate check
 let isFlushing = false;       // prevents concurrent flushQueue calls
 let isFlushingErrors = false; // prevents concurrent flushErrorQueue calls
+
+function submitManual() {
+  const input = document.getElementById('manual-name');
+  const raw = input.value.trim();
+  if (!raw) {
+    logVerbose('Manual entry attempted with empty field');
+    return;
+  }
+  const now = Date.now();
+  const name = toProperCase(raw.replace(/\s+/g, ' ')) + ' (Manually Entered)';
+  const normalisedName = raw.replace(/\s+/g, ' ').trim().toUpperCase();
+
+  // 5-second debounce — prevent double-tap submitting the same name twice
+  if (now - lastManualTime < 5000 && normalisedName === lastManualName) {
+    logVerbose('Manual entry debounced (double-tap): "' + name + '"');
+    showToast('Already just added — please wait a moment');
+    return;
+  }
+  lastManualTime = now;
+  lastManualName = normalisedName;
+
+  input.value = '';
+  input.blur();
+  const entry = { id: now, name: name, time: new Date(), status: 'pending' };
+  incrementDailyCount();
+  updateDailyCountBadge();
+  beep();
+  if (navigator.vibrate) navigator.vibrate(80);
+  scanLog.unshift(entry);
+  if (scanLog.length > SCAN_LOG_MAX) scanLog = scanLog.slice(0, SCAN_LOG_MAX);
+  renderLog();
+  postToSheet(entry);
+  logError('INFO', 'Manual entry: ' + name);
+  showToast('Added: ' + name);
+}
 
 function handleScan(value) {
   const now = Date.now();
@@ -997,7 +1058,7 @@ function clearLog() {
 
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.11, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.12, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 

@@ -1,9 +1,9 @@
 // Airdrie Over 50 Club — Attendance Scanner
-// Service Worker v3.11
+// Service Worker v3.12
 // Bump CACHE_VERSION below whenever a new version of index.html is deployed.
 // The old cache will be automatically cleared and the fresh files downloaded.
 
-const CACHE_VERSION = 'ao50-v3.11';
+const CACHE_VERSION = 'ao50-v3.12';
 const CACHED_URLS = [
   '/',
   '/index.html'
