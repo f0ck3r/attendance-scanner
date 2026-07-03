@@ -229,6 +229,10 @@
   v3.12 — Restored manual name entry (reverts v3.11). Re-added submitManual(),
           its debounce state, the manual-bar HTML/CSS, and the mobile-layout
           media query rule, unchanged from the pre-v3.11 implementation.
+  v3.13 — Manual entries no longer append "(Manually Entered)" to the name
+          before posting to the sheet. Manual entry itself is unchanged —
+          staff can still type a name in — it now just reads the same as a
+          scanned entry in the sheet.
 
 ================================================================================
 -->
@@ -435,7 +439,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.12</span>
+  <span class="version-tag" id="version-tag">v3.13</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -726,7 +730,7 @@ function submitManual() {
     return;
   }
   const now = Date.now();
-  const name = toProperCase(raw.replace(/\s+/g, ' ')) + ' (Manually Entered)';
+  const name = toProperCase(raw.replace(/\s+/g, ' '));
   const normalisedName = raw.replace(/\s+/g, ' ').trim().toUpperCase();
 
   // 5-second debounce — prevent double-tap submitting the same name twice
@@ -1058,7 +1062,7 @@ function clearLog() {
 
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.12, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.13, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
