@@ -54,14 +54,36 @@
   - Posts via GET request with ?name=...&timestamp=... parameters
   - Apps Script URL is hardcoded (see HARDCODED SETTINGS below)
   - Timestamps are formatted in Mountain Time (America/Edmonton)
-  - Google Apps Script code (in the linked Sheet):
+  - Google Apps Script code (in the linked Sheet, 'Master Sheet' tab):
       function doGet(e) {
         if (e.parameter.token !== 'ao50club2025') return ContentService.createTextOutput("Unauthorized");
-        const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-        sheet.appendRow([
-          e.parameter.name,
-          e.parameter.timestamp
-        ]);
+        const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Master Sheet');
+        if (!sheet) return ContentService.createTextOutput("Sheet not found");
+
+        const timestamp = e.parameter.timestamp;
+        const name = e.parameter.name;
+
+        // Idempotency check (added after a real duplicate row was found on
+        // 2026-07-07): a client-side fetch timeout aborts the CLIENT's wait,
+        // not the Apps Script execution — if the server was just slow (e.g.
+        // sheet write contention during a burst of retries), it finishes and
+        // appends anyway. The client, having already given up and queued the
+        // scan for retry, then successfully posts the same entry again later
+        // with the identical original timestamp. Skip the append if that
+        // exact timestamp+name pair already exists in the last 100 rows.
+        const lastRow = sheet.getLastRow();
+        const checkRows = Math.min(lastRow, 100);
+        if (checkRows > 0) {
+          const startRow = lastRow - checkRows + 1;
+          const existing = sheet.getRange(startRow, 1, checkRows, 2).getValues();
+          for (let i = 0; i < existing.length; i++) {
+            if (existing[i][0] === timestamp && existing[i][1] === name) {
+              return ContentService.createTextOutput("Duplicate skipped");
+            }
+          }
+        }
+
+        sheet.appendRow([timestamp, name]);
         return ContentService.createTextOutput("OK");
       }
 
