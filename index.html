@@ -302,6 +302,23 @@
           Also now writes a third column (a literal 1) per row, at Scott's
           request, to match a per-row count convention used elsewhere in the
           sheet. See the doGet() code above for the corrected version.
+  v3.16 — Fix for a reported "camera freezes after ~15 min, needs force-close"
+          issue. scanFrames()'s tick loop scheduled its next tick on a fixed
+          timer immediately after starting a Quagga.decodeSingle() call,
+          without waiting for it to finish. Normally each decode completes
+          well within one tick interval, but iPads thermally throttle under
+          sustained heavy use — and continuous camera + per-pixel image
+          processing for 15+ minutes is exactly that kind of load. Once
+          decodes started taking longer than the tick rate, new ticks could
+          fire before old decodes finished, piling up overlapping decode
+          calls faster than they drain — consuming more memory/CPU the
+          longer the session ran, plausibly explaining the eventual freeze.
+          Added a decodeInFlight flag: a tick now skips starting a new
+          decode if the previous one hasn't finished yet, capping concurrent
+          decodes at 1 so the loop self-paces to whatever rate decodeSingle
+          can actually sustain and can never accumulate a backlog. Reset
+          defensively on session start and on any exception in the frame-
+          processing try/catch, so a single bad frame can't leave it stuck.
 
 ================================================================================
 -->
@@ -510,7 +527,7 @@
 </div>
 
 <div class="bottom-bar">
-  <span class="version-tag" id="version-tag">v3.15</span>
+  <span class="version-tag" id="version-tag">v3.16</span>
   <span class="queue-badge" id="queue-badge" style="display:none"></span>
 </div>
 
@@ -627,6 +644,7 @@ function startSession(source) {
     (sinceManualBlur !== null && sinceManualBlur < 5000 ? ' — ' + sinceManualBlur + 'ms after manual entry field blurred' : ''));
   lastScanTime = 0;
   sessionCheckedIn = {};
+  decodeInFlight = false; // defensive reset in case a prior session left this stuck
   sessionActive = true; // set immediately (synchronously) to close the double-tap window
                          // before getUserMedia resolves; reverted to false below if it fails
   unlockAudio();
@@ -705,11 +723,15 @@ function stopSession() {
 //   - Adaptive tick rate: 80ms (~12fps) active, 200ms idle after 30s no scan
 //   - Periodic full loop restart every 10 min clears Quagga memory accumulation
 //   - Scan log capped at SCAN_LOG_MAX entries to limit DOM growth
+//   - At most one Quagga.decodeSingle() call in flight at a time — prevents
+//     overlapping decode calls from piling up if a decode ever runs slower
+//     than the tick rate (e.g. iPad thermal throttling on a long session)
 // Accuracy features:
 //   - 2-frame vote confirmation + checksum validation
 //   - Greyscale + brightness lift + contrast stretch for low light
 
 let scanFramesGeneration = 0; // increments on each restart to cancel stale loops
+let decodeInFlight = false; // true while a Quagga.decodeSingle() call is pending
 
 function scanFrames() {
   const myGeneration = ++scanFramesGeneration;
@@ -721,7 +743,18 @@ function scanFrames() {
     // Cancel if session ended or a newer loop started
     if (!sessionActive || scanFramesGeneration !== myGeneration) return;
 
-    if (video.readyState >= 2 && video.videoWidth > 0 && !video.paused && !video.ended) {
+    // Skip starting a new decode if the previous one hasn't finished yet.
+    // Normally each decode completes well within one tick interval, but
+    // iPads thermally throttle their CPU under sustained heavy use (camera +
+    // per-pixel image processing for 15+ minutes is exactly that kind of
+    // load) — once decodes start taking longer than the tick rate, ticks
+    // firing on a fixed timer would otherwise start piling up overlapping
+    // decode calls faster than they drain, consuming more memory/CPU the
+    // longer the session runs, eventually freezing the whole app (reported
+    // by staff: camera "freezes" after ~15 min, requires force-close).
+    // Skipping here caps concurrent decodes at 1, so the loop self-paces to
+    // whatever rate decodeSingle can actually sustain and can never pile up.
+    if (video.readyState >= 2 && video.videoWidth > 0 && !video.paused && !video.ended && !decodeInFlight) {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
 
@@ -745,6 +778,7 @@ function scanFrames() {
         ctx.putImageData(imageData, 0, 0);
 
         idleTickCount++;
+        decodeInFlight = true;
 
         Quagga.decodeSingle({
           decoder: {
@@ -755,6 +789,7 @@ function scanFrames() {
           inputStream: { size: 1280 },
           src: canvas.toDataURL('image/jpeg', 0.85)
         }, function(result) {
+          decodeInFlight = false;
           if (scanFramesGeneration !== myGeneration) return; // stale callback
           const code = result && result.codeResult && result.codeResult.code;
           const validChecksum = result && result.codeResult &&
@@ -787,6 +822,10 @@ function scanFrames() {
           }
         });
       } catch(e) {
+        // decodeInFlight may have been set just before the throw (e.g. if
+        // canvas.toDataURL() itself threw) — reset it so a single bad frame
+        // can't permanently wedge the loop by leaving it stuck "in flight".
+        decodeInFlight = false;
         // Silently swallow InvalidStateError — expected when stream stops mid-frame
         // Log anything else as it may be actionable
         if (e.name !== 'InvalidStateError') {
@@ -1151,7 +1190,7 @@ function clearLog() {
 
 renderLog();
 updateDailyCountBadge(); // restore daily count from localStorage on launch
-logVerbose('App loaded — v3.15, userAgent: ' + navigator.userAgent.substring(0, 80));
+logVerbose('App loaded — v3.16, userAgent: ' + navigator.userAgent.substring(0, 80));
 logVerbose('Online status on load: ' + (navigator.onLine ? 'online' : 'offline'));
 logVerbose('Queue on load: ' + loadQueue().length + ' pending attendance, ' + loadErrorQueue().length + ' pending errors');
 
